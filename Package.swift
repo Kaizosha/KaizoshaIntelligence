@@ -1,26 +1,120 @@
 // swift-tools-version: 6.3
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
 let package = Package(
     name: "KaizoshaIntelligence",
+    platforms: [
+        .macOS(.v13),
+        .iOS(.v17),
+        .tvOS(.v17),
+        .watchOS(.v10),
+        .macCatalyst(.v17),
+        .visionOS(.v1),
+    ],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "KaizoshaIntelligence",
             targets: ["KaizoshaIntelligence"]
         ),
+        .library(
+            name: "KaizoshaProvider",
+            targets: ["KaizoshaProvider"]
+        ),
+        .library(
+            name: "KaizoshaOpenAI",
+            targets: ["KaizoshaOpenAI"]
+        ),
+        .library(
+            name: "KaizoshaAnthropic",
+            targets: ["KaizoshaAnthropic"]
+        ),
+        .library(
+            name: "KaizoshaGoogle",
+            targets: ["KaizoshaGoogle"]
+        ),
+        .library(
+            name: "KaizoshaGateway",
+            targets: ["KaizoshaGateway"]
+        ),
+        .executable(
+            name: "KaizoshaCLIExample",
+            targets: ["KaizoshaCLIExample"]
+        ),
+        .executable(
+            name: "KaizoshaServerExample",
+            targets: ["KaizoshaServerExample"]
+        ),
+        .executable(
+            name: "KaizoshaProviderComparisonExample",
+            targets: ["KaizoshaProviderComparisonExample"]
+        ),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.1.0"),
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "KaizoshaIntelligence"
+            name: "KaizoshaProvider"
+        ),
+        .target(
+            name: "KaizoshaTransport",
+            dependencies: ["KaizoshaProvider"]
+        ),
+        .target(
+            name: "KaizoshaIntelligence",
+            dependencies: ["KaizoshaProvider"]
+        ),
+        .target(
+            name: "KaizoshaOpenAI",
+            dependencies: ["KaizoshaProvider", "KaizoshaTransport"]
+        ),
+        .target(
+            name: "KaizoshaAnthropic",
+            dependencies: ["KaizoshaProvider", "KaizoshaTransport"]
+        ),
+        .target(
+            name: "KaizoshaGoogle",
+            dependencies: ["KaizoshaProvider", "KaizoshaTransport"]
+        ),
+        .target(
+            name: "KaizoshaGateway",
+            dependencies: ["KaizoshaProvider", "KaizoshaTransport", "KaizoshaOpenAI"]
+        ),
+        .executableTarget(
+            name: "KaizoshaCLIExample",
+            dependencies: ["KaizoshaIntelligence", "KaizoshaOpenAI"],
+            path: "Examples/CLIExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaServerExample",
+            dependencies: ["KaizoshaIntelligence", "KaizoshaGateway"],
+            path: "Examples/ServerExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaProviderComparisonExample",
+            dependencies: [
+                "KaizoshaIntelligence",
+                "KaizoshaOpenAI",
+                "KaizoshaAnthropic",
+                "KaizoshaGoogle",
+                "KaizoshaGateway",
+            ]
+            ,
+            path: "Examples/ProviderComparisonExample"
         ),
         .testTarget(
-            name: "KaizoshaIntelligenceTests",
-            dependencies: ["KaizoshaIntelligence"]
+            name: "KaizoshaSDKTests",
+            dependencies: [
+                "KaizoshaIntelligence",
+                "KaizoshaProvider",
+                "KaizoshaTransport",
+                "KaizoshaOpenAI",
+                "KaizoshaAnthropic",
+                "KaizoshaGoogle",
+                "KaizoshaGateway",
+            ],
+            path: "Tests/KaizoshaSDKTests"
         ),
     ],
     swiftLanguageModes: [.v6]
