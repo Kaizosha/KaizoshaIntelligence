@@ -95,7 +95,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
         let body = try messagePayload(for: request, stream: false)
         let response = try await client.send(
             HTTPRequest(
-                url: baseURL.appending(path: "messages"),
+                url: baseURL.appendingPathComponents("messages"),
                 headers: headers,
                 body: try body.data()
             )
@@ -137,7 +137,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
                     continuation.yield(.status("started"))
                     let body = try messagePayload(for: request, stream: true)
                     let httpRequest = HTTPRequest(
-                        url: baseURL.appending(path: "messages"),
+                        url: baseURL.appendingPathComponents("messages"),
                         headers: headers,
                         body: try body.data()
                     )

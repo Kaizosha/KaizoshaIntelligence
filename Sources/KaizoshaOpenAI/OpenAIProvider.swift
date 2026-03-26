@@ -112,7 +112,7 @@ public struct OpenAILanguageModel: LanguageModel, Sendable {
         let body = try chatPayload(for: request, stream: false)
         let response = try await client.send(
             HTTPRequest(
-                url: baseURL.appending(path: "chat/completions"),
+                url: baseURL.appendingPathComponents("chat/completions"),
                 headers: headers(contentType: "application/json"),
                 body: try body.data()
             )
@@ -153,7 +153,7 @@ public struct OpenAILanguageModel: LanguageModel, Sendable {
                     continuation.yield(.status("started"))
                     let body = try chatPayload(for: request, stream: true)
                     let httpRequest = HTTPRequest(
-                        url: baseURL.appending(path: "chat/completions"),
+                        url: baseURL.appendingPathComponents("chat/completions"),
                         headers: headers(contentType: "application/json"),
                         body: try body.data()
                     )
@@ -425,7 +425,7 @@ public struct OpenAIEmbeddingModel: EmbeddingModel, Sendable {
 
         let response = try await client.send(
             HTTPRequest(
-                url: baseURL.appending(path: "embeddings"),
+                url: baseURL.appendingPathComponents("embeddings"),
                 headers: [
                     "Authorization": "Bearer \(apiKey)",
                     "Content-Type": "application/json",
@@ -486,7 +486,7 @@ public struct OpenAIImageModel: ImageModel, Sendable {
         let body = JSONValue.object(object).mergingObject(with: request.providerOptions.options(for: OpenAIProvider.namespace))
         let response = try await client.send(
             HTTPRequest(
-                url: baseURL.appending(path: "images/generations"),
+                url: baseURL.appendingPathComponents("images/generations"),
                 headers: [
                     "Authorization": "Bearer \(apiKey)",
                     "Content-Type": "application/json",
@@ -545,7 +545,7 @@ public struct OpenAISpeechModel: SpeechModel, Sendable {
 
         let response = try await client.send(
             HTTPRequest(
-                url: baseURL.appending(path: "audio/speech"),
+                url: baseURL.appendingPathComponents("audio/speech"),
                 headers: [
                     "Authorization": "Bearer \(apiKey)",
                     "Content-Type": "application/json",
@@ -602,7 +602,7 @@ public struct OpenAITranscriptionModel: TranscriptionModel, Sendable {
 
         let response = try await client.send(
             HTTPRequest(
-                url: baseURL.appending(path: "audio/transcriptions"),
+                url: baseURL.appendingPathComponents("audio/transcriptions"),
                 headers: [
                     "Authorization": "Bearer \(apiKey)",
                     "Content-Type": multipart.contentType,

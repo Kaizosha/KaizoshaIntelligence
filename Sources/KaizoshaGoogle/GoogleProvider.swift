@@ -276,7 +276,7 @@ public struct GoogleLanguageModel: LanguageModel, Sendable {
     }
 
     private func endpoint(_ suffix: String, extraQueryItems: [URLQueryItem] = []) -> URL {
-        var components = URLComponents(url: baseURL.appending(path: "models/\(id)\(suffix)"), resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: baseURL.appendingPathComponents("models/\(id)\(suffix)"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "key", value: apiKey)] + extraQueryItems
         return components.url!
     }
@@ -412,7 +412,7 @@ public struct GoogleEmbeddingModel: EmbeddingModel, Sendable {
     }
 
     private func endpoint(_ suffix: String) -> URL {
-        var components = URLComponents(url: baseURL.appending(path: "models/\(id)\(suffix)"), resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: baseURL.appendingPathComponents("models/\(id)\(suffix)"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "key", value: apiKey)]
         return components.url!
     }
@@ -485,7 +485,7 @@ public struct GoogleImageModel: ImageModel, Sendable {
     }
 
     private func endpoint(_ suffix: String, extraQueryItems: [URLQueryItem] = []) -> URL {
-        var components = URLComponents(url: baseURL.appending(path: "models/\(id)\(suffix)"), resolvingAgainstBaseURL: false)!
+        var components = URLComponents(url: baseURL.appendingPathComponents("models/\(id)\(suffix)"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "key", value: apiKey)] + extraQueryItems
         return components.url!
     }
