@@ -85,7 +85,11 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
 
     public func execute(_ request: HTTPRequest) async throws -> HTTPResponse {
         let urlRequest = buildURLRequest(from: request)
+#if os(Linux)
+        let (data, response) = try await executeDataTask(for: urlRequest)
+#else
         let (data, response) = try await session.data(for: urlRequest)
+#endif
         guard let httpResponse = response as? HTTPURLResponse else {
             throw KaizoshaError.invalidResponse("The server response was not an HTTPURLResponse.")
         }
@@ -101,21 +105,41 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
         let urlRequest = buildURLRequest(from: request)
 
         return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
 #if os(Linux)
-                    let (data, response) = try await session.data(for: urlRequest)
-                    let httpResponse = try validatedHTTPResponse(from: response)
+            let dataTask = session.dataTask(with: urlRequest) { data, response, error in
+                do {
+                    if let error {
+                        throw error
+                    }
+
+                    guard let data, let response else {
+                        throw KaizoshaError.invalidResponse("The transport did not return data.")
+                    }
+
+                    let httpResponse = try self.validatedHTTPResponse(from: response)
 
                     guard (200..<300).contains(httpResponse.statusCode) else {
                         let body = String(decoding: data, as: UTF8.self)
                         throw KaizoshaError.httpFailure(statusCode: httpResponse.statusCode, body: body)
                     }
 
-                    for line in bufferedLines(from: data) {
+                    for line in self.bufferedLines(from: data) {
                         continuation.yield(line)
                     }
+
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            dataTask.resume()
+            continuation.onTermination = { _ in
+                dataTask.cancel()
+            }
 #else
+            let task = Task {
+                do {
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     let httpResponse = try validatedHTTPResponse(from: response)
 
@@ -130,7 +154,6 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
                     for try await line in bytes.lines {
                         continuation.yield(line)
                     }
-#endif
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -140,6 +163,29 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
             continuation.onTermination = { _ in
                 task.cancel()
             }
+#endif
+        }
+    }
+
+    private func executeDataTask(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            let task = session.dataTask(with: request) { data, response, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let data, let response else {
+                    continuation.resume(
+                        throwing: KaizoshaError.invalidResponse("The transport did not return data.")
+                    )
+                    return
+                }
+
+                continuation.resume(returning: (data, response))
+            }
+
+            task.resume()
         }
     }
 
