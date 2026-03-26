@@ -13,7 +13,15 @@ struct KaizoshaServerExample {
             )
             print(response.text)
         } catch {
-            fputs("Server example failed: \(error.localizedDescription)\n", stderr)
+            writeToStandardError("Server example failed: \(error.localizedDescription)\n")
         }
+    }
+
+    private static func writeToStandardError(_ message: String) {
+        guard let data = message.data(using: .utf8) else {
+            return
+        }
+
+        FileHandle.standardError.write(data)
     }
 }
