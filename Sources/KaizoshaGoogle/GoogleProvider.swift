@@ -72,6 +72,67 @@ public struct GoogleProvider: Sendable {
     public func imageModel(_ id: String) -> GoogleImageModel {
         GoogleImageModel(id: id, apiKey: apiKey, baseURL: baseURL, client: client)
     }
+
+    /// Fetches the live model catalog from Google.
+    public func listModels() async throws -> [AvailableModel] {
+        var models: [AvailableModel] = []
+        var nextPageToken: String?
+
+        repeat {
+            let page = try await listModelsPage(pageToken: nextPageToken)
+            models.append(contentsOf: page.models)
+            nextPageToken = page.nextPageToken
+        } while nextPageToken != nil
+
+        return models
+    }
+
+    private func listModelsPage(pageToken: String?) async throws -> (models: [AvailableModel], nextPageToken: String?) {
+        var components = URLComponents(url: baseURL.appendingPathComponents("models"), resolvingAgainstBaseURL: false)!
+        var queryItems = [URLQueryItem(name: "key", value: apiKey)]
+        if let pageToken {
+            queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+        }
+        components.queryItems = queryItems
+
+        let payload = try await client.sendJSON(
+            HTTPRequest(
+                url: components.url!,
+                method: .get
+            )
+        )
+
+        guard let object = payload.objectValue, let entries = object["models"]?.arrayValue else {
+            throw KaizoshaError.invalidResponse("Google returned an invalid model list payload.")
+        }
+
+        let models = try entries.map(Self.mapAvailableModel)
+        return (models, object["nextPageToken"]?.stringValue)
+    }
+
+    private static func mapAvailableModel(_ value: JSONValue) throws -> AvailableModel {
+        guard let object = value.objectValue else {
+            throw KaizoshaError.invalidResponse("Google returned a non-object model entry.")
+        }
+
+        guard let providerIdentifier = object["name"]?.stringValue else {
+            throw KaizoshaError.invalidResponse("Google returned a model entry without a name.")
+        }
+
+        let modelID = object["baseModelId"]?.stringValue
+            ?? providerIdentifier.replacingOccurrences(of: "models/", with: "")
+
+        return AvailableModel(
+            id: modelID,
+            providerIdentifier: providerIdentifier,
+            provider: namespace,
+            displayName: object["displayName"]?.stringValue,
+            contextWindow: ModelCatalogDecoding.intValue(object["inputTokenLimit"]),
+            maxOutputTokens: ModelCatalogDecoding.intValue(object["outputTokenLimit"]),
+            supportedGenerationMethods: ModelCatalogDecoding.stringArray(object["supportedGenerationMethods"]),
+            rawMetadata: value
+        )
+    }
 }
 
 /// A Google language model.

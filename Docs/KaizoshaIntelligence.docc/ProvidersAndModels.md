@@ -38,6 +38,21 @@ let provider = try GatewayProvider()
 let model = provider.languageModel("openai/gpt-4o-mini")
 ```
 
+## Live Model Catalogs
+
+Providers can fetch their live model catalogs directly from the upstream API instead of relying on hardcoded lists.
+
+```swift
+let provider = try OpenAIProvider()
+let models = try await provider.listModels()
+
+for model in models {
+    print(model.id)
+}
+```
+
+``AvailableModel`` includes the normalized SDK identifier plus any provider metadata the adapter can surface, such as display names, token limits, supported generation methods, and the raw provider payload.
+
 ## Provider Options
 
 Shared settings live in ``GenerationConfig``. Provider-specific options belong in ``ProviderOptions`` and should remain namespaced by adapter.

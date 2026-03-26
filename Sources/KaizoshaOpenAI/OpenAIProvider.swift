@@ -78,6 +78,41 @@ public struct OpenAIProvider: Sendable {
     public func transcriptionModel(_ id: String = "gpt-4o-mini-transcribe") -> OpenAITranscriptionModel {
         OpenAITranscriptionModel(id: id, apiKey: apiKey, baseURL: baseURL, client: client)
     }
+
+    /// Fetches the live model catalog from OpenAI.
+    public func listModels() async throws -> [AvailableModel] {
+        let payload = try await client.sendJSON(
+            HTTPRequest(
+                url: baseURL.appendingPathComponents("models"),
+                method: .get,
+                headers: authorizationHeaders
+            )
+        )
+
+        guard let entries = payload.objectValue?["data"]?.arrayValue else {
+            throw KaizoshaError.invalidResponse("OpenAI returned an invalid model list payload.")
+        }
+
+        return try entries.map(Self.mapAvailableModel)
+    }
+
+    private var authorizationHeaders: [String: String] {
+        ["Authorization": "Bearer \(apiKey)"]
+    }
+
+    private static func mapAvailableModel(_ value: JSONValue) throws -> AvailableModel {
+        guard let object = value.objectValue, let id = object["id"]?.stringValue else {
+            throw KaizoshaError.invalidResponse("OpenAI returned a model entry without an id.")
+        }
+
+        return AvailableModel(
+            id: id,
+            provider: namespace,
+            ownedBy: object["owned_by"]?.stringValue,
+            createdAt: ModelCatalogDecoding.unixTimestamp(object["created"]),
+            rawMetadata: value
+        )
+    }
 }
 
 /// A chat-completions-backed language model.

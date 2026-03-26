@@ -61,6 +61,65 @@ public struct AnthropicProvider: Sendable {
     public func languageModel(_ id: String) -> AnthropicLanguageModel {
         AnthropicLanguageModel(id: id, apiKey: apiKey, baseURL: baseURL, client: client)
     }
+
+    /// Fetches the live model catalog from Anthropic.
+    public func listModels() async throws -> [AvailableModel] {
+        var models: [AvailableModel] = []
+        var afterID: String?
+
+        repeat {
+            let page = try await listModelsPage(afterID: afterID)
+            models.append(contentsOf: page.models)
+            afterID = page.nextAfterID
+        } while afterID != nil
+
+        return models
+    }
+
+    private func listModelsPage(afterID: String?) async throws -> (models: [AvailableModel], nextAfterID: String?) {
+        var components = URLComponents(url: baseURL.appendingPathComponents("models"), resolvingAgainstBaseURL: false)!
+        if let afterID {
+            components.queryItems = [URLQueryItem(name: "after_id", value: afterID)]
+        }
+
+        let payload = try await client.sendJSON(
+            HTTPRequest(
+                url: components.url!,
+                method: .get,
+                headers: catalogHeaders
+            )
+        )
+
+        guard let object = payload.objectValue, let entries = object["data"]?.arrayValue else {
+            throw KaizoshaError.invalidResponse("Anthropic returned an invalid model list payload.")
+        }
+
+        let models = try entries.map(Self.mapAvailableModel)
+        let nextAfterID = object["has_more"]?.boolValue == true ? object["last_id"]?.stringValue : nil
+        return (models, nextAfterID)
+    }
+
+    private static func mapAvailableModel(_ value: JSONValue) throws -> AvailableModel {
+        guard let object = value.objectValue, let id = object["id"]?.stringValue else {
+            throw KaizoshaError.invalidResponse("Anthropic returned a model entry without an id.")
+        }
+
+        return AvailableModel(
+            id: id,
+            provider: namespace,
+            displayName: object["display_name"]?.stringValue,
+            type: "language",
+            createdAt: ModelCatalogDecoding.iso8601Date(object["created_at"]),
+            rawMetadata: value
+        )
+    }
+
+    private var catalogHeaders: [String: String] {
+        [
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+        ]
+    }
 }
 
 /// An Anthropic messages-backed language model.

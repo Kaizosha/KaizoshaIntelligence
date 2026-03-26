@@ -35,6 +35,19 @@ let response = try await generateText(
 print(response.text)
 ```
 
+## Live Model Discovery
+
+```swift
+import KaizoshaOpenAI
+
+let provider = try OpenAIProvider()
+let models = try await provider.listModels()
+
+for model in models.prefix(5) {
+    print(model.id)
+}
+```
+
 ## Documentation
 
 Generate the DocC archive locally:

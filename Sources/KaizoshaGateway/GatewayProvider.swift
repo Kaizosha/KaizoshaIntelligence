@@ -9,6 +9,8 @@ public struct GatewayProvider: Sendable {
     public static let namespace = "gateway"
 
     private let openAICompatible: OpenAIProvider
+    private let baseURL: URL
+    private let client: HTTPClient
 
     /// Creates an AI Gateway provider using the OpenAI-compatible API.
     public init(
@@ -17,6 +19,8 @@ public struct GatewayProvider: Sendable {
         transport: (any HTTPTransport)? = nil,
         retryPolicy: RetryPolicy = .default
     ) throws {
+        self.baseURL = baseURL
+        self.client = HTTPClient(transport: transport, retryPolicy: retryPolicy)
         self.openAICompatible = try OpenAIProvider(
             apiKey: apiKey,
             baseURL: baseURL,
@@ -38,6 +42,38 @@ public struct GatewayProvider: Sendable {
     /// Creates an image model handle.
     public func imageModel(_ id: String) -> GatewayImageModel {
         GatewayImageModel(id: id, underlying: openAICompatible.imageModel(id))
+    }
+
+    /// Fetches the live routed model catalog from AI Gateway.
+    public func listModels() async throws -> [AvailableModel] {
+        let payload = try await client.sendJSON(
+            HTTPRequest(
+                url: baseURL.appendingPathComponents("models"),
+                method: .get
+            )
+        )
+
+        guard let entries = payload.objectValue?["data"]?.arrayValue else {
+            throw KaizoshaError.invalidResponse("Gateway returned an invalid model list payload.")
+        }
+
+        return try entries.map(Self.mapAvailableModel)
+    }
+
+    private static func mapAvailableModel(_ value: JSONValue) throws -> AvailableModel {
+        guard let object = value.objectValue, let id = object["id"]?.stringValue else {
+            throw KaizoshaError.invalidResponse("Gateway returned a model entry without an id.")
+        }
+
+        return AvailableModel(
+            id: id,
+            provider: namespace,
+            displayName: object["name"]?.stringValue,
+            type: object["type"]?.stringValue,
+            contextWindow: ModelCatalogDecoding.intValue(object["context_window"]),
+            maxOutputTokens: ModelCatalogDecoding.intValue(object["max_tokens"]),
+            rawMetadata: value
+        )
     }
 }
 

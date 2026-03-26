@@ -55,6 +55,179 @@ struct TransportAndProviderTests {
         #expect(value.objectValue?["ok"]?.boolValue == true)
     }
 
+    @Test("OpenAI provider lists models from the live catalog endpoint")
+    func openAIProviderListsModels() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "data": [
+                        {
+                          "id": "gpt-4o-mini",
+                          "created": 1721173200,
+                          "owned_by": "openai"
+                        }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let models = try await provider.listModels()
+
+        #expect(models.count == 1)
+        #expect(models.first?.id == "gpt-4o-mini")
+        #expect(models.first?.ownedBy == "openai")
+        #expect(models.first?.provider == OpenAIProvider.namespace)
+    }
+
+    @Test("Anthropic provider paginates model catalog responses")
+    func anthropicProviderListsModelsAcrossPages() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "data": [
+                        {
+                          "id": "claude-3-5-haiku-latest",
+                          "display_name": "Claude 3.5 Haiku",
+                          "created_at": "2024-06-01T12:00:00Z"
+                        }
+                      ],
+                      "has_more": true,
+                      "last_id": "claude-3-5-haiku-latest"
+                    }
+                    """.utf8
+                )
+            )
+        )
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "data": [
+                        {
+                          "id": "claude-3-7-sonnet-latest",
+                          "display_name": "Claude 3.7 Sonnet",
+                          "created_at": "2024-10-22T12:00:00Z"
+                        }
+                      ],
+                      "has_more": false,
+                      "last_id": "claude-3-7-sonnet-latest"
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let models = try await provider.listModels()
+
+        #expect(models.map(\.id) == ["claude-3-5-haiku-latest", "claude-3-7-sonnet-latest"])
+        #expect(models.first?.displayName == "Claude 3.5 Haiku")
+        #expect(models.allSatisfy { $0.provider == AnthropicProvider.namespace })
+    }
+
+    @Test("Google provider normalizes live model catalog identifiers")
+    func googleProviderListsModels() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "models": [
+                        {
+                          "name": "models/gemini-2.0-flash",
+                          "baseModelId": "gemini-2.0-flash",
+                          "displayName": "Gemini 2.0 Flash",
+                          "inputTokenLimit": 1048576,
+                          "outputTokenLimit": 8192,
+                          "supportedGenerationMethods": ["generateContent"]
+                        }
+                      ],
+                      "nextPageToken": "page-2"
+                    }
+                    """.utf8
+                )
+            )
+        )
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "models": [
+                        {
+                          "name": "models/text-embedding-004",
+                          "baseModelId": "text-embedding-004",
+                          "displayName": "Text Embedding 004",
+                          "supportedGenerationMethods": ["embedContent"]
+                        }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let models = try await provider.listModels()
+
+        #expect(models.count == 2)
+        #expect(models.first?.id == "gemini-2.0-flash")
+        #expect(models.first?.providerIdentifier == "models/gemini-2.0-flash")
+        #expect(models.first?.contextWindow == 1_048_576)
+        #expect(models.first?.supportedGenerationMethods == ["generateContent"])
+        #expect(models.last?.id == "text-embedding-004")
+    }
+
+    @Test("Gateway provider lists routed models from the catalog endpoint")
+    func gatewayProviderListsModels() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "data": [
+                        {
+                          "id": "openai/gpt-4o-mini",
+                          "name": "GPT-4o mini",
+                          "type": "language",
+                          "context_window": 128000,
+                          "max_tokens": 16384
+                        }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GatewayProvider(apiKey: "test", transport: transport)
+        let models = try await provider.listModels()
+
+        #expect(models.count == 1)
+        #expect(models.first?.id == "openai/gpt-4o-mini")
+        #expect(models.first?.displayName == "GPT-4o mini")
+        #expect(models.first?.type == "language")
+        #expect(models.first?.provider == GatewayProvider.namespace)
+    }
+
     @Test("OpenAI adapter parses text and tool calls")
     func openAIAdapterParsesResponse() async throws {
         let transport = MockHTTPTransport()
