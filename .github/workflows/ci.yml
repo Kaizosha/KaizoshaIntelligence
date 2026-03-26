@@ -14,7 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04]
+        # Swift is not currently available on GitHub-hosted Ubuntu 24.04 runners.
+        os: [macos-15, ubuntu-22.04]
 
     steps:
       - uses: actions/checkout@v4
