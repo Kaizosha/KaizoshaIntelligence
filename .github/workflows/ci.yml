@@ -7,13 +7,16 @@ on:
       - "codex/**"
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test-macos:
     name: Build and Test (macos-15)
     runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2
@@ -42,7 +45,7 @@ jobs:
       image: swift:6.2-jammy
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Swift Version
         run: swift --version
@@ -91,7 +94,7 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2
