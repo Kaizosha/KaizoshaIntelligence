@@ -103,10 +103,21 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let (bytes, response) = try await session.bytes(for: urlRequest)
-                    guard let httpResponse = response as? HTTPURLResponse else {
-                        throw KaizoshaError.invalidResponse("The server response was not an HTTPURLResponse.")
+#if os(Linux)
+                    let (data, response) = try await session.data(for: urlRequest)
+                    let httpResponse = try validatedHTTPResponse(from: response)
+
+                    guard (200..<300).contains(httpResponse.statusCode) else {
+                        let body = String(decoding: data, as: UTF8.self)
+                        throw KaizoshaError.httpFailure(statusCode: httpResponse.statusCode, body: body)
                     }
+
+                    for line in bufferedLines(from: data) {
+                        continuation.yield(line)
+                    }
+#else
+                    let (bytes, response) = try await session.bytes(for: urlRequest)
+                    let httpResponse = try validatedHTTPResponse(from: response)
 
                     guard (200..<300).contains(httpResponse.statusCode) else {
                         var body = ""
@@ -119,6 +130,7 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
                     for try await line in bytes.lines {
                         continuation.yield(line)
                     }
+#endif
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -129,6 +141,19 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
                 task.cancel()
             }
         }
+    }
+
+    private func validatedHTTPResponse(from response: URLResponse) throws -> HTTPURLResponse {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw KaizoshaError.invalidResponse("The server response was not an HTTPURLResponse.")
+        }
+
+        return httpResponse
+    }
+
+    private func bufferedLines(from data: Data) -> [String] {
+        String(decoding: data, as: UTF8.self)
+            .components(separatedBy: .newlines)
     }
 
     private func buildURLRequest(from request: HTTPRequest) -> URLRequest {
