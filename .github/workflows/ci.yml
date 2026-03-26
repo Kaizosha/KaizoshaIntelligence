@@ -24,12 +24,39 @@ jobs:
         run: swift --version
 
       - name: Build
-        run: swift build
+        id: build
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          swift build 2>&1 | tee build.log
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Report Build Failure
+        if: steps.build.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          {
+            echo "## Linux build failure"
+            echo
+            echo '```text'
+            tail -n 200 build.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS= read -r line; do
+            echo "::error::$line"
+          done < <(grep -E 'error:' build.log | tail -n 20)
+
+          exit 1
 
       - name: Test
+        if: steps.build.outputs.exit_code == '0'
         run: swift test
 
       - name: Example Smoke Build
+        if: steps.build.outputs.exit_code == '0'
         run: |
           swift build --product KaizoshaCLIExample
           swift build --product KaizoshaServerExample
