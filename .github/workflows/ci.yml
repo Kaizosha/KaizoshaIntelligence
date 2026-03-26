@@ -24,6 +24,30 @@ jobs:
         run: swift --version
 
       - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Example Smoke Build
+        run: |
+          swift build --product KaizoshaCLIExample
+          swift build --product KaizoshaServerExample
+          swift build --product KaizoshaProviderComparisonExample
+
+  build-and-test-linux:
+    name: Build and Test (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    container:
+      image: swift:6.2-jammy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift Version
+        run: swift --version
+
+      - name: Build
         id: build
         shell: bash
         run: |
@@ -57,30 +81,6 @@ jobs:
 
       - name: Example Smoke Build
         if: steps.build.outputs.exit_code == '0'
-        run: |
-          swift build --product KaizoshaCLIExample
-          swift build --product KaizoshaServerExample
-          swift build --product KaizoshaProviderComparisonExample
-
-  build-and-test-linux:
-    name: Build and Test (ubuntu-24.04)
-    runs-on: ubuntu-24.04
-    container:
-      image: swift:6.2-jammy
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Swift Version
-        run: swift --version
-
-      - name: Build
-        run: swift build
-
-      - name: Test
-        run: swift test
-
-      - name: Example Smoke Build
         run: |
           swift build --product KaizoshaCLIExample
           swift build --product KaizoshaServerExample
