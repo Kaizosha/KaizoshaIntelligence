@@ -38,6 +38,19 @@ let provider = try GoogleProvider()
 let model = provider.languageModel("gemini-2.0-flash")
 ```
 
+Google also exposes Google-only service clients and a raw content model:
+
+```swift
+let contentModel = provider.contentModel("gemini-2.5-flash")
+let modelCatalog = provider.models
+let files = provider.files
+let cachedContents = provider.cachedContents
+let fileSearchStores = provider.fileSearchStores
+let batches = provider.batches
+let interactions = provider.interactions
+let live = provider.live
+```
+
 ### Gateway
 
 ```swift
@@ -65,3 +78,5 @@ for model in models {
 Shared settings live in ``GenerationConfig``. Provider-specific options belong in ``ProviderOptions`` and should remain namespaced by adapter.
 
 For OpenAI, ``OpenAIProviderOptions`` maps Responses-specific settings such as `instructions`, `previousResponseID`, `conversationID`, `include`, `promptCacheKey`, `serviceTier`, native tools, and reasoning detail. The `user` field remains available only for the legacy Chat Completions adapter; the Responses path follows OpenAI's `promptCacheKey` and `safetyIdentifier` guidance instead.
+
+For Google, ``GoogleProviderOptions`` maps `generationConfig`, `safetySettings`, `toolConfig`, cached-content references, storage/service-tier settings, and Google built-in tools while keeping the provider-neutral `GenerationConfig` surface stable.

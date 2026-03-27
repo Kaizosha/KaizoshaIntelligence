@@ -7,6 +7,7 @@ Kaizosha Intelligence is a Swift-first AI SDK with a provider-agnostic core and 
 - Unified text generation and streaming APIs
 - OpenAI Responses-first language adapter with explicit legacy Chat Completions fallback
 - OpenAI-only raw Responses, files, GPT-image edits, DALL-E 2 variations, speech streaming on compatible TTS models, translation, and Realtime APIs
+- Google Gemini `generateContent` plus Google-only models, token counting, files, cached contents, file-search stores, batch jobs, Interactions, and Live APIs
 - Typed structured output with `Schema<Value>`
 - Deterministic tool calling
 - Embeddings, image generation, speech generation, and transcription abstractions
@@ -87,14 +88,35 @@ let client = try provider.realtimeClient(
 ## Live Model Discovery
 
 ```swift
-import KaizoshaOpenAI
+import KaizoshaGoogle
 
-let provider = try OpenAIProvider()
+let provider = try GoogleProvider()
 let models = try await provider.listModels()
 
 for model in models.prefix(5) {
     print(model.id)
 }
+```
+
+## Google Gemini APIs
+
+```swift
+import KaizoshaGoogle
+
+let provider = try GoogleProvider()
+let contentModel = provider.contentModel("gemini-2.5-flash")
+let tokenCount = try await provider.tokens.countTokens(
+    modelID: "gemini-2.5-flash",
+    request: GoogleCountTokensRequest(
+        generateContentRequest: GoogleContentRequest(
+            contents: [
+                GoogleContent(parts: [GoogleContentPart(text: "Explain actor isolation.")])
+            ]
+        )
+    )
+)
+
+print(tokenCount.totalTokens ?? 0)
 ```
 
 ## Example Executables
@@ -105,6 +127,13 @@ for model in models.prefix(5) {
 - `KaizoshaOpenAIResponsesExample`
 - `KaizoshaOpenAIBuiltInToolsExample`
 - `KaizoshaOpenAIRealtimeExample`
+- `KaizoshaGoogleGroundingExample`
+- `KaizoshaGoogleCachingExample`
+- `KaizoshaGoogleFilesExample`
+- `KaizoshaGoogleFileSearchExample`
+- `KaizoshaGoogleBatchExample`
+- `KaizoshaGoogleInteractionsExample`
+- `KaizoshaGoogleLiveExample`
 
 ## Documentation
 

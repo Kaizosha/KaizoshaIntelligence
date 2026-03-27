@@ -61,6 +61,34 @@ let package = Package(
             name: "KaizoshaOpenAIRealtimeExample",
             targets: ["KaizoshaOpenAIRealtimeExample"]
         ),
+        .executable(
+            name: "KaizoshaGoogleGroundingExample",
+            targets: ["KaizoshaGoogleGroundingExample"]
+        ),
+        .executable(
+            name: "KaizoshaGoogleCachingExample",
+            targets: ["KaizoshaGoogleCachingExample"]
+        ),
+        .executable(
+            name: "KaizoshaGoogleFilesExample",
+            targets: ["KaizoshaGoogleFilesExample"]
+        ),
+        .executable(
+            name: "KaizoshaGoogleFileSearchExample",
+            targets: ["KaizoshaGoogleFileSearchExample"]
+        ),
+        .executable(
+            name: "KaizoshaGoogleBatchExample",
+            targets: ["KaizoshaGoogleBatchExample"]
+        ),
+        .executable(
+            name: "KaizoshaGoogleInteractionsExample",
+            targets: ["KaizoshaGoogleInteractionsExample"]
+        ),
+        .executable(
+            name: "KaizoshaGoogleLiveExample",
+            targets: ["KaizoshaGoogleLiveExample"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.1.0"),
@@ -129,6 +157,41 @@ let package = Package(
             name: "KaizoshaOpenAIRealtimeExample",
             dependencies: ["KaizoshaOpenAI"],
             path: "Examples/OpenAIRealtimeExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleGroundingExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleGroundingExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleCachingExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleCachingExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleFilesExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleFilesExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleFileSearchExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleFileSearchExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleBatchExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleBatchExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleInteractionsExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleInteractionsExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaGoogleLiveExample",
+            dependencies: ["KaizoshaGoogle"],
+            path: "Examples/GoogleLiveExample"
         ),
         .testTarget(
             name: "KaizoshaSDKTests",

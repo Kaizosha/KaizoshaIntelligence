@@ -37,6 +37,13 @@ jobs:
           swift build --product KaizoshaCLIExample
           swift build --product KaizoshaServerExample
           swift build --product KaizoshaProviderComparisonExample
+          swift build --product KaizoshaGoogleGroundingExample
+          swift build --product KaizoshaGoogleCachingExample
+          swift build --product KaizoshaGoogleFilesExample
+          swift build --product KaizoshaGoogleFileSearchExample
+          swift build --product KaizoshaGoogleBatchExample
+          swift build --product KaizoshaGoogleInteractionsExample
+          swift build --product KaizoshaGoogleLiveExample
 
   build-and-test-linux:
     name: Build and Test (ubuntu-24.04)
@@ -88,6 +95,13 @@ jobs:
           swift build --product KaizoshaCLIExample
           swift build --product KaizoshaServerExample
           swift build --product KaizoshaProviderComparisonExample
+          swift build --product KaizoshaGoogleGroundingExample
+          swift build --product KaizoshaGoogleCachingExample
+          swift build --product KaizoshaGoogleFilesExample
+          swift build --product KaizoshaGoogleFileSearchExample
+          swift build --product KaizoshaGoogleBatchExample
+          swift build --product KaizoshaGoogleInteractionsExample
+          swift build --product KaizoshaGoogleLiveExample
 
   documentation:
     name: Documentation

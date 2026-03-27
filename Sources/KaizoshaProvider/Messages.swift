@@ -63,6 +63,9 @@ public struct FileContent: Sendable, Hashable {
     /// The provider-managed file identifier when the file is already uploaded.
     public var providerFileID: String?
 
+    /// The provider-managed file URI when the provider requires a reusable URI instead of an ID.
+    public var providerFileURI: String?
+
     /// The provider namespace that owns the uploaded file identifier.
     public var providerNamespace: String?
 
@@ -73,6 +76,7 @@ public struct FileContent: Sendable, Hashable {
             fileName: fileName,
             mimeType: mimeType,
             providerFileID: nil,
+            providerFileURI: nil,
             providerNamespace: nil
         )
     }
@@ -81,6 +85,7 @@ public struct FileContent: Sendable, Hashable {
     public init(
         providerFileID: String,
         providerNamespace: String,
+        providerFileURI: String? = nil,
         fileName: String? = nil,
         mimeType: String = "application/octet-stream"
     ) {
@@ -89,6 +94,7 @@ public struct FileContent: Sendable, Hashable {
             fileName: fileName,
             mimeType: mimeType,
             providerFileID: providerFileID,
+            providerFileURI: providerFileURI,
             providerNamespace: providerNamespace
         )
     }
@@ -98,12 +104,14 @@ public struct FileContent: Sendable, Hashable {
         fileName: String?,
         mimeType: String,
         providerFileID: String?,
+        providerFileURI: String?,
         providerNamespace: String?
     ) {
         self.data = data
         self.fileName = fileName
         self.mimeType = mimeType
         self.providerFileID = providerFileID
+        self.providerFileURI = providerFileURI
         self.providerNamespace = providerNamespace
     }
 }

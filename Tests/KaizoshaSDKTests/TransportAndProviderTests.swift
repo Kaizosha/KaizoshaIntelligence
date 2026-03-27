@@ -1024,6 +1024,302 @@ struct TransportAndProviderTests {
         #expect(toolName == "lookup_weather")
     }
 
+    @Test("Google content model counts tokens with cached-content requests")
+    func googleCountTokensMapsGenerateContentRequest() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "totalTokens": 42,
+                      "cachedContentTokenCount": 8
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let response = try await provider.tokens.countTokens(
+            modelID: "gemini-test",
+            request: GoogleCountTokensRequest(
+                generateContentRequest: GoogleContentRequest(
+                    contents: [
+                        GoogleContent(parts: [GoogleContentPart(text: "Hello Gemini")]),
+                    ],
+                    options: GoogleProviderOptions(cachedContent: "cachedContents/123")
+                )
+            )
+        )
+
+        #expect(response.totalTokens == 42)
+        #expect(response.cachedContentTokenCount == 8)
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["generateContentRequest"]?.objectValue?["model"]?.stringValue == "models/gemini-test")
+        #expect(body.objectValue?["generateContentRequest"]?.objectValue?["cachedContent"]?.stringValue == "cachedContents/123")
+    }
+
+    @Test("Google files upload uses resumable upload flow")
+    func googleFilesUploadUsesResumableProtocol() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                headers: ["X-Goog-Upload-URL": "https://upload.example.com/session-1"],
+                body: Data()
+            )
+        )
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "file": {
+                        "name": "files/abc",
+                        "displayName": "notes.txt",
+                        "mimeType": "text/plain",
+                        "uri": "https://files.example.com/abc"
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let file = try await provider.files.upload(
+            data: Data("hello".utf8),
+            fileName: "notes.txt",
+            mimeType: "text/plain"
+        )
+
+        #expect(file.name == "files/abc")
+        #expect(file.uri == "https://files.example.com/abc")
+
+        let reusable = try file.asFileContent()
+        #expect(reusable.providerFileURI == "https://files.example.com/abc")
+        #expect(transport.requests.count == 2)
+        #expect(transport.requests[0].headers["X-Goog-Upload-Protocol"] == "resumable")
+        #expect(transport.requests[1].headers["X-Goog-Upload-Command"] == "upload, finalize")
+
+        let startBody = try decodeRequestBody(from: transport, at: 0)
+        #expect(startBody.objectValue?["file"]?.objectValue?["displayName"]?.stringValue == "notes.txt")
+    }
+
+    @Test("Google prompt file reuse maps provider file URIs")
+    func googlePromptFileReuseUsesFileURI() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "candidates": [{
+                        "content": {
+                          "parts": [{ "text": "Read complete." }]
+                        },
+                        "finishReason": "STOP"
+                      }]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        _ = try await provider.languageModel("gemini-test").generate(
+            request: TextGenerationRequest(
+                messages: [
+                    .user(parts: [
+                        .text("Summarize this."),
+                        .file(
+                            FileContent(
+                                providerFileID: "files/abc",
+                                providerNamespace: GoogleProvider.namespace,
+                                providerFileURI: "https://files.example.com/abc",
+                                fileName: "notes.txt",
+                                mimeType: "text/plain"
+                            )
+                        ),
+                    ]),
+                ]
+            )
+        )
+
+        let body = try decodeRequestBody(from: transport)
+        let filePart = body.objectValue?["contents"]?.arrayValue?.first?.objectValue?["parts"]?.arrayValue?[1]
+        #expect(filePart?.objectValue?["fileData"]?.objectValue?["fileUri"]?.stringValue == "https://files.example.com/abc")
+    }
+
+    @Test("Google interactions reject background mode without storage")
+    func googleInteractionsValidateBackgroundAndStore() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.interactions.create(
+                GoogleInteractionRequest(
+                    model: "gemini-3-flash-preview",
+                    input: .text("Hi"),
+                    store: false,
+                    background: true
+                )
+            )
+        }
+    }
+
+    @Test("Google interactions stream deltas and completion events")
+    func googleInteractionsStreamEvents() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            stream: [
+                "data: {\"type\":\"content.delta\",\"delta\":\"Hello\"}",
+                "",
+                "data: {\"type\":\"interaction.complete\",\"id\":\"int_1\",\"status\":\"completed\",\"outputs\":[]}",
+                "",
+            ]
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let stream = provider.interactions.stream(
+            GoogleInteractionRequest(
+                model: "gemini-3-flash-preview",
+                input: .text("Hi")
+            )
+        )
+
+        var delta = ""
+        var completedID: String?
+        for try await event in stream {
+            switch event {
+            case .contentDelta(let value):
+                delta += value
+            case .complete(let response):
+                completedID = response.id
+            default:
+                break
+            }
+        }
+
+        #expect(delta == "Hello")
+        #expect(completedID == "int_1")
+    }
+
+    @Test("Google Live auth tokens and websocket setup use documented routes")
+    func googleLiveAuthAndSetup() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "name": "ephemeral-token",
+                      "expireTime": "2026-03-26T01:00:00Z",
+                      "uses": 1
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let authToken = try await provider.live.createAuthToken(
+            GoogleLiveAuthTokenRequest(
+                setup: GoogleLiveSetup(model: "models/gemini-live-2.5-flash-preview")
+            )
+        )
+
+        #expect(authToken.value == "ephemeral-token")
+
+        let webSocketTransport = MockWebSocketTransport()
+        let client = try await provider.live.connect(
+            setup: GoogleLiveSetup(model: "models/gemini-live-2.5-flash-preview"),
+            authorization: .authToken("ephemeral-token"),
+            webSocketTransport: webSocketTransport
+        )
+        _ = client
+
+        let requests = await webSocketTransport.requests
+        let sentTexts = await webSocketTransport.connection.sentTexts
+        #expect(requests.first?.url.absoluteString.contains("BidiGenerateContentConstrained") == true)
+        #expect(requests.first?.url.absoluteString.contains("access_token=ephemeral-token") == true)
+        #expect(sentTexts.first?.contains("\"setup\"") == true)
+    }
+
+    @Test("Google file-search-store imports include chunking metadata")
+    func googleFileSearchImportMapsChunking() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "name": "operations/import-1",
+                      "done": false
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let operation = try await provider.fileSearchStores.importFile(
+            fileSearchStoreName: "fileSearchStores/store-1",
+            fileName: "files/abc",
+            customMetadata: [GoogleCustomMetadata(key: "team", stringValue: "search")],
+            chunkingConfig: GoogleChunkingConfiguration(maxTokensPerChunk: 256, maxOverlapTokens: 32)
+        )
+
+        #expect(operation.name == "operations/import-1")
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["fileName"]?.stringValue == "files/abc")
+        #expect(body.objectValue?["chunkingConfig"]?.objectValue?["whiteSpaceConfig"]?.objectValue?["maxTokensPerChunk"]?.numberValue == 256)
+    }
+
+    @Test("Google batch embeddings use the native batch endpoint")
+    func googleBatchEmbeddingsUseNativeEndpoint() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "embeddings": [
+                        { "values": [0.1, 0.2] },
+                        { "values": [0.3, 0.4] }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let response = try await provider.batches.batchEmbedContents(
+            modelID: "text-embedding-004",
+            requests: [
+                GoogleBatchEmbeddingRequest(text: "alpha"),
+                GoogleBatchEmbeddingRequest(text: "beta"),
+            ]
+        )
+
+        #expect(response.embeddings.count == 2)
+        #expect(response.embeddings.first?.first == 0.1)
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["requests"]?.arrayValue?.count == 2)
+        #expect(body.objectValue?["requests"]?.arrayValue?.first?.objectValue?["model"]?.stringValue == "models/text-embedding-004")
+    }
+
     @Test("Capability validation rejects unsupported prompt parts")
     func capabilityValidationRejectsUnsupportedInputs() async throws {
         let transport = MockHTTPTransport()

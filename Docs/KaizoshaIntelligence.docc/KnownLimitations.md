@@ -16,7 +16,8 @@ These constraints are intentional in v1.
 - OpenAI diarized transcription is implemented for `/audio/transcriptions` and is not presented as a Realtime capability.
 - OpenAI `chatCompletionsModel(_:)` is retained for migration safety and intentionally accepts only the subset of provider options that make sense for the legacy API.
 - Anthropic support in v1 is focused on text, tool use, structured output, and image input.
-- Google support in v1 is focused on Gemini text, streaming, tools, embeddings, image-capable generation, and multimodal prompt parts.
+- Google support now covers most of the modern Gemini Developer API surface, but some pieces intentionally remain Google-only instead of being forced into the shared provider-neutral contracts.
+- Google Interactions and Live are implemented as preview Google-specific APIs. The shared `SpeechModel` and `TranscriptionModel` abstractions are still reserved for providers with stable dedicated REST surfaces that map cleanly to those contracts.
 - Gateway support in v1 follows the OpenAI-compatible route used by the current adapter.
 
 ## Compatibility Notes
