@@ -14,7 +14,14 @@ Kaizosha Intelligence separates the high-level API surface from provider impleme
 
 ```swift
 let provider = try OpenAIProvider()
-let model = provider.languageModel("gpt-4o-mini")
+let model = provider.languageModel("gpt-5")
+```
+
+`languageModel(_:)` is Responses-backed by default. OpenAI also exposes:
+
+```swift
+let responses = provider.responsesModel("gpt-5")
+let legacy = provider.chatCompletionsModel("gpt-4o-mini")
 ```
 
 ### Anthropic
@@ -56,3 +63,5 @@ for model in models {
 ## Provider Options
 
 Shared settings live in ``GenerationConfig``. Provider-specific options belong in ``ProviderOptions`` and should remain namespaced by adapter.
+
+For OpenAI, ``OpenAIProviderOptions`` maps Responses-specific settings such as `instructions`, `previousResponseID`, `conversationID`, `include`, `promptCacheKey`, `serviceTier`, native tools, and reasoning detail. The `user` field remains available only for the legacy Chat Completions adapter; the Responses path follows OpenAI's `promptCacheKey` and `safetyIdentifier` guidance instead.

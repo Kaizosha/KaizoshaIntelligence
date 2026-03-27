@@ -4,6 +4,8 @@ Create a provider, choose a model, and call the high-level generation API.
 
 ## OpenAI
 
+`OpenAIProvider.languageModel(_:)` uses the OpenAI Responses API by default.
+
 ```swift
 import KaizoshaIntelligence
 import KaizoshaOpenAI
@@ -11,7 +13,7 @@ import KaizoshaOpenAI
 let provider = try OpenAIProvider()
 let response = try await generateText(
     prompt: "Explain actor isolation in one sentence.",
-    using: provider.languageModel("gpt-4o-mini")
+    using: provider.languageModel("gpt-5")
 )
 
 print(response.text)
@@ -33,5 +35,6 @@ let response = try await generateText(
 ## Next Steps
 
 - Read <doc:ProvidersAndModels> to understand the package split.
+- Read <doc:OpenAIResponses> if you need raw OpenAI Responses access or built-in tools.
 - Read <doc:StructuredOutput> to decode typed values from model output.
 - Read <doc:ToolCalling> to attach deterministic tools to generation requests.

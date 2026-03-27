@@ -7,13 +7,81 @@ public struct OpenAIProviderOptions: Sendable, Hashable {
     /// An optional end-user identifier.
     public var user: String?
 
+    /// High-level instructions inserted ahead of user input for the current response.
+    public var instructions: String?
+
+    /// The previous response identifier for stateless conversation chaining.
+    public var previousResponseID: String?
+
+    /// The conversation identifier used for server-managed conversation state.
+    public var conversationID: String?
+
+    /// Whether the response should be stored for later retrieval.
+    public var store: Bool?
+
+    /// Whether the response should run in the background.
+    public var background: Bool?
+
+    /// A cache key used to improve prompt-cache hit rates.
+    public var promptCacheKey: String?
+
+    /// The requested prompt-cache retention policy.
+    public var promptCacheRetention: OpenAIPromptCacheRetention
+
+    /// Additional response fields to include in OpenAI output payloads.
+    public var include: [String]
+
+    /// The requested OpenAI service tier.
+    public var serviceTier: OpenAIServiceTier?
+
     /// Whether the provider may execute tool calls in parallel.
     public var parallelToolCalls: Bool?
 
+    /// A stable safety identifier for abuse prevention and policy monitoring.
+    public var safetyIdentifier: String?
+
+    /// Native OpenAI tools available to the Responses API.
+    public var nativeTools: [OpenAINativeTool]
+
+    /// The reasoning summary detail to request from supported reasoning models.
+    public var reasoningSummary: OpenAIReasoningSummary?
+
+    /// The verbosity preference to request from supported GPT-5 models.
+    public var verbosity: OpenAITextVerbosity?
+
     /// Creates provider-specific OpenAI options.
-    public init(user: String? = nil, parallelToolCalls: Bool? = nil) {
+    public init(
+        user: String? = nil,
+        instructions: String? = nil,
+        previousResponseID: String? = nil,
+        conversationID: String? = nil,
+        store: Bool? = nil,
+        background: Bool? = nil,
+        promptCacheKey: String? = nil,
+        promptCacheRetention: OpenAIPromptCacheRetention = .providerDefault,
+        include: [String] = [],
+        serviceTier: OpenAIServiceTier? = nil,
+        parallelToolCalls: Bool? = nil,
+        safetyIdentifier: String? = nil,
+        nativeTools: [OpenAINativeTool] = [],
+        reasoningSummary: OpenAIReasoningSummary? = nil,
+        verbosity: OpenAITextVerbosity? = nil
+    ) {
         self.user = user
+        self.instructions = instructions
+        self.previousResponseID = previousResponseID
+        self.conversationID = conversationID
+        self.store = store
+        self.background = background
+        self.promptCacheKey = promptCacheKey
+        self.promptCacheRetention = promptCacheRetention
+        self.include = include
+        self.serviceTier = serviceTier
         self.parallelToolCalls = parallelToolCalls
+        self.safetyIdentifier = safetyIdentifier
+        self.nativeTools = nativeTools
+        self.reasoningSummary = reasoningSummary
+        self.verbosity = verbosity
     }
 
     /// Encodes the options into a JSON payload.
@@ -22,8 +90,47 @@ public struct OpenAIProviderOptions: Sendable, Hashable {
         if let user {
             object["user"] = .string(user)
         }
+        if let instructions {
+            object["instructions"] = .string(instructions)
+        }
+        if let previousResponseID {
+            object["previous_response_id"] = .string(previousResponseID)
+        }
+        if let conversationID {
+            object["conversation_id"] = .string(conversationID)
+        }
+        if let store {
+            object["store"] = .bool(store)
+        }
+        if let background {
+            object["background"] = .bool(background)
+        }
+        if let promptCacheKey {
+            object["prompt_cache_key"] = .string(promptCacheKey)
+        }
+        if promptCacheRetention != .providerDefault {
+            object["prompt_cache_retention"] = .string(promptCacheRetention.rawValue)
+        }
+        if include.isEmpty == false {
+            object["include"] = .array(include.map(JSONValue.string))
+        }
+        if let serviceTier {
+            object["service_tier"] = .string(serviceTier.rawValue)
+        }
         if let parallelToolCalls {
             object["parallel_tool_calls"] = .bool(parallelToolCalls)
+        }
+        if let safetyIdentifier {
+            object["safety_identifier"] = .string(safetyIdentifier)
+        }
+        if nativeTools.isEmpty == false {
+            object["native_tools"] = .array(nativeTools.map(\.jsonValue))
+        }
+        if let reasoningSummary {
+            object["reasoning_summary"] = .string(reasoningSummary.rawValue)
+        }
+        if let verbosity {
+            object["verbosity"] = .string(verbosity.rawValue)
         }
         return .object(object)
     }
@@ -34,9 +141,9 @@ public struct OpenAIProvider: Sendable {
     /// The provider namespace used in namespaced options.
     public static let namespace = "openai"
 
-    private let apiKey: String
-    private let baseURL: URL
-    private let client: HTTPClient
+    let apiKey: String
+    let baseURL: URL
+    let client: HTTPClient
 
     /// Creates an OpenAI provider.
     public init(
@@ -54,8 +161,18 @@ public struct OpenAIProvider: Sendable {
         self.client = HTTPClient(transport: transport, retryPolicy: retryPolicy)
     }
 
-    /// Creates a language model handle.
-    public func languageModel(_ id: String) -> OpenAILanguageModel {
+    /// Creates a Responses-backed language model handle.
+    public func languageModel(_ id: String) -> OpenAIResponsesLanguageModel {
+        responsesModel(id)
+    }
+
+    /// Creates the canonical Responses-backed language model handle.
+    public func responsesModel(_ id: String) -> OpenAIResponsesLanguageModel {
+        OpenAIResponsesLanguageModel(id: id, apiKey: apiKey, baseURL: baseURL, client: client)
+    }
+
+    /// Creates a legacy Chat Completions-backed language model handle.
+    public func chatCompletionsModel(_ id: String) -> OpenAILanguageModel {
         OpenAILanguageModel(id: id, apiKey: apiKey, baseURL: baseURL, client: client)
     }
 
@@ -96,7 +213,7 @@ public struct OpenAIProvider: Sendable {
         return try entries.map(Self.mapAvailableModel)
     }
 
-    private var authorizationHeaders: [String: String] {
+    var authorizationHeaders: [String: String] {
         ["Authorization": "Bearer \(apiKey)"]
     }
 
@@ -131,9 +248,9 @@ public struct OpenAILanguageModel: LanguageModel, Sendable {
         supportsReasoningControls: false
     )
 
-    private let apiKey: String
-    private let baseURL: URL
-    private let client: HTTPClient
+    let apiKey: String
+    let baseURL: URL
+    let client: HTTPClient
 
     fileprivate init(id: String, apiKey: String, baseURL: URL, client: HTTPClient) {
         self.id = id
@@ -291,7 +408,7 @@ public struct OpenAILanguageModel: LanguageModel, Sendable {
             ])
         }
 
-        return JSONValue.object(object).mergingObject(with: request.providerOptions.options(for: OpenAIProvider.namespace))
+        return JSONValue.object(object).mergingObject(with: Self.chatCompletionsProviderOptions(from: request.providerOptions))
     }
 
     private func mapMessages(_ messages: [Message]) throws -> [JSONValue] {
@@ -417,6 +534,19 @@ public struct OpenAILanguageModel: LanguageModel, Sendable {
         ]
     }
 
+    private static func chatCompletionsProviderOptions(from providerOptions: ProviderOptions) -> JSONValue {
+        guard let object = providerOptions.options(for: OpenAIProvider.namespace)?.objectValue else {
+            return .object([:])
+        }
+
+        var filtered: [String: JSONValue] = [:]
+        if let user = object["user"] {
+            filtered["user"] = user
+        }
+
+        return .object(filtered)
+    }
+
     private static func mapToolInvocation(_ toolCall: OpenAIChatCompletionResponse.ToolCall) throws -> ToolInvocation {
         guard let data = toolCall.function.arguments.data(using: .utf8) else {
             throw KaizoshaError.invalidResponse("OpenAI returned non-UTF8 tool arguments.")
@@ -439,9 +569,9 @@ public struct OpenAIEmbeddingModel: EmbeddingModel, Sendable {
         supportsBatchEmbeddings: true
     )
 
-    private let apiKey: String
-    private let baseURL: URL
-    private let client: HTTPClient
+    let apiKey: String
+    let baseURL: URL
+    let client: HTTPClient
 
     fileprivate init(id: String, apiKey: String, baseURL: URL, client: HTTPClient) {
         self.id = id
@@ -495,9 +625,9 @@ public struct OpenAIImageModel: ImageModel, Sendable {
         supportsMultipleImageOutputs: true
     )
 
-    private let apiKey: String
-    private let baseURL: URL
-    private let client: HTTPClient
+    let apiKey: String
+    let baseURL: URL
+    let client: HTTPClient
 
     fileprivate init(id: String, apiKey: String, baseURL: URL, client: HTTPClient) {
         self.id = id
@@ -558,9 +688,9 @@ public struct OpenAISpeechModel: SpeechModel, Sendable {
         supportedSpeechFormats: [.mp3, .wav, .aac, .flac, .opus, .pcm16]
     )
 
-    private let apiKey: String
-    private let baseURL: URL
-    private let client: HTTPClient
+    let apiKey: String
+    let baseURL: URL
+    let client: HTTPClient
 
     fileprivate init(id: String, apiKey: String, baseURL: URL, client: HTTPClient) {
         self.id = id
@@ -575,7 +705,7 @@ public struct OpenAISpeechModel: SpeechModel, Sendable {
             "model": .string(id),
             "input": .string(request.prompt),
             "voice": .string(request.voice),
-            "response_format": .string(request.format.rawValue),
+            "response_format": .string(Self.legacyResponseFormat(for: request.format)),
         ]).mergingObject(with: request.providerOptions.options(for: OpenAIProvider.namespace))
 
         let response = try await client.send(
@@ -599,6 +729,15 @@ public struct OpenAISpeechModel: SpeechModel, Sendable {
         let mimeType = response.headers["Content-Type"] ?? "audio/mpeg"
         return SpeechGenerationResponse(modelID: id, audio: response.body, mimeType: mimeType)
     }
+
+    private static func legacyResponseFormat(for format: AudioFormat) -> String {
+        switch format {
+        case .pcm16:
+            return "pcm"
+        case .mp3, .wav, .aac, .flac, .opus:
+            return format.rawValue
+        }
+    }
 }
 
 /// An OpenAI transcription model.
@@ -612,9 +751,9 @@ public struct OpenAITranscriptionModel: TranscriptionModel, Sendable {
         supportsTranscriptionLanguageHint: true
     )
 
-    private let apiKey: String
-    private let baseURL: URL
-    private let client: HTTPClient
+    let apiKey: String
+    let baseURL: URL
+    let client: HTTPClient
 
     fileprivate init(id: String, apiKey: String, baseURL: URL, client: HTTPClient) {
         self.id = id

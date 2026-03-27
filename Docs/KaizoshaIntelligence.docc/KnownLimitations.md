@@ -10,6 +10,11 @@ These constraints are intentional in v1.
 
 ## Provider Notes
 
+- OpenAI built-in voice discovery is exposed as a documented built-in list plus custom-voice creation; there is no separate provider-neutral voice abstraction in v1.
+- OpenAI Realtime is GA-first around `createRealtimeClientSecret(_:)`; `createRealtimeSession(_:)` remains as a compatibility helper because OpenAI still publishes the older endpoint shape in its OpenAPI spec.
+- OpenAI image variations follow the current provider API and are restricted to `dall-e-2`.
+- OpenAI diarized transcription is implemented for `/audio/transcriptions` and is not presented as a Realtime capability.
+- OpenAI `chatCompletionsModel(_:)` is retained for migration safety and intentionally accepts only the subset of provider options that make sense for the legacy API.
 - Anthropic support in v1 is focused on text, tool use, structured output, and image input.
 - Google support in v1 is focused on Gemini text, streaming, tools, embeddings, image-capable generation, and multimodal prompt parts.
 - Gateway support in v1 follows the OpenAI-compatible route used by the current adapter.

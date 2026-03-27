@@ -228,7 +228,7 @@ struct TransportAndProviderTests {
         #expect(models.first?.provider == GatewayProvider.namespace)
     }
 
-    @Test("OpenAI adapter parses text and tool calls")
+    @Test("OpenAI Responses adapter parses text and tool calls")
     func openAIAdapterParsesResponse() async throws {
         let transport = MockHTTPTransport()
         transport.enqueue(
@@ -237,23 +237,32 @@ struct TransportAndProviderTests {
                 body: Data(
                     """
                     {
+                      "id": "resp_123",
                       "model": "gpt-test",
-                      "choices": [{
-                        "message": {
-                          "content": "Hello from OpenAI",
-                          "tool_calls": [{
-                            "id": "call_1",
-                            "function": {
-                              "name": "lookup_weather",
-                              "arguments": "{\\"city\\":\\"Tokyo\\"}"
+                      "status": "completed",
+                      "output": [
+                        {
+                          "id": "msg_1",
+                          "type": "message",
+                          "role": "assistant",
+                          "content": [
+                            {
+                              "type": "output_text",
+                              "text": "Hello from OpenAI"
                             }
-                          }]
+                          ]
                         },
-                        "finish_reason": "tool_calls"
-                      }],
+                        {
+                          "id": "fc_1",
+                          "type": "function_call",
+                          "call_id": "call_1",
+                          "name": "lookup_weather",
+                          "arguments": "{\\"city\\":\\"Tokyo\\"}"
+                        }
+                      ],
                       "usage": {
-                        "prompt_tokens": 5,
-                        "completion_tokens": 7,
+                        "input_tokens": 5,
+                        "output_tokens": 7,
                         "total_tokens": 12
                       }
                     }
@@ -272,18 +281,20 @@ struct TransportAndProviderTests {
         #expect(response.usage?.totalTokens == 12)
     }
 
-    @Test("OpenAI adapter streams text deltas and tool calls")
+    @Test("OpenAI Responses adapter streams text deltas and tool calls")
     func openAIStreamingParsesSSE() async throws {
         let transport = MockHTTPTransport()
         transport.enqueue(
             stream: [
-                "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}",
+                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-test\",\"status\":\"in_progress\"}}",
                 "",
-                "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}",
                 "",
-                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"lookup_weather\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}",
                 "",
-                "data: [DONE]",
+                "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"lookup_weather\",\"arguments\":\"{}\"}}",
+                "",
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-test\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]},{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"lookup_weather\",\"arguments\":\"{}\"}]}}",
                 "",
             ]
         )
@@ -308,6 +319,549 @@ struct TransportAndProviderTests {
 
         #expect(text == "Hello")
         #expect(toolName == "lookup_weather")
+    }
+
+    @Test("OpenAI Responses requests map advanced provider options")
+    func openAIResponsesRequestsMapAdvancedOptions() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "id": "resp_advanced",
+                      "model": "gpt-5",
+                      "status": "completed",
+                      "output": [
+                        {
+                          "id": "msg_1",
+                          "type": "message",
+                          "role": "assistant",
+                          "content": [
+                            {
+                              "type": "output_text",
+                              "text": "Done"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setOpenAI(
+            OpenAIProviderOptions(
+                user: "user_123",
+                instructions: "Respond tersely.",
+                conversationID: "conv_123",
+                store: true,
+                background: true,
+                promptCacheKey: "cache-key",
+                promptCacheRetention: .extended24Hours,
+                include: ["reasoning.summary"],
+                serviceTier: .flex,
+                parallelToolCalls: false,
+                safetyIdentifier: "safety-user",
+                nativeTools: [.webSearch()],
+                reasoningSummary: .concise,
+                verbosity: .low
+            )
+        )
+
+        let tools = ToolRegistry([
+            AnyTool(
+                name: "lookup_weather",
+                description: "Look up the forecast.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "city": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("city")]),
+                ]),
+                execute: { _, _ in
+                    .object(["forecast": .string("sunny")])
+                }
+            ),
+        ])
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        _ = try await provider.languageModel("gpt-5").generate(
+            request: TextGenerationRequest(
+                messages: [
+                    .system("System direction."),
+                    .user("Hello"),
+                ],
+                generation: GenerationConfig(reasoning: .medium),
+                tools: tools,
+                providerOptions: providerOptions,
+                metadata: ["trace_id": "trace-123"]
+            )
+        )
+
+        let body = try decodeRequestBody(from: transport)
+        let object = try #require(body.objectValue)
+        let input = try #require(object["input"]?.arrayValue)
+        let developerMessage = try #require(input.first?.objectValue)
+        let toolsPayload = try #require(object["tools"]?.arrayValue)
+        let reasoning = try #require(object["reasoning"]?.objectValue)
+        let text = try #require(object["text"]?.objectValue)
+        let metadata = try #require(object["metadata"]?.objectValue)
+
+        #expect(object["instructions"]?.stringValue == "Respond tersely.")
+        #expect(object["conversation"]?.objectValue?["id"]?.stringValue == "conv_123")
+        #expect(object["store"]?.boolValue == true)
+        #expect(object["background"]?.boolValue == true)
+        #expect(object["prompt_cache_key"]?.stringValue == "cache-key")
+        #expect(object["prompt_cache_retention"]?.stringValue == "24h")
+        #expect(object["include"]?.arrayValue?.compactMap(\.stringValue) == ["reasoning.summary"])
+        #expect(object["service_tier"]?.stringValue == "flex")
+        #expect(object["parallel_tool_calls"]?.boolValue == false)
+        #expect(object["safety_identifier"]?.stringValue == "safety-user")
+        #expect(object["tool_choice"]?.stringValue == "auto")
+        #expect(object["user"] == nil)
+        #expect(reasoning["effort"]?.stringValue == "medium")
+        #expect(reasoning["summary"]?.stringValue == "concise")
+        #expect(text["verbosity"]?.stringValue == "low")
+        #expect(metadata["trace_id"]?.stringValue == "trace-123")
+        #expect(developerMessage["role"]?.stringValue == "developer")
+        #expect(toolsPayload.count == 2)
+        #expect(toolsPayload.last?.objectValue?["type"]?.stringValue == "web_search")
+    }
+
+    @Test("OpenAI Responses reject previousResponseID and conversationID together")
+    func openAIResponsesRejectMixedConversationState() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setOpenAI(
+            OpenAIProviderOptions(
+                previousResponseID: "resp_previous",
+                conversationID: "conv_123"
+            )
+        )
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.languageModel("gpt-5").generate(
+                request: TextGenerationRequest(
+                    prompt: "Hello",
+                    providerOptions: providerOptions
+                )
+            )
+        }
+    }
+
+    @Test("OpenAI Responses reject GPT-5 verbosity on unsupported model families")
+    func openAIResponsesRejectUnsupportedVerbosity() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setOpenAI(OpenAIProviderOptions(verbosity: .low))
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.languageModel("gpt-4o-mini").generate(
+                request: TextGenerationRequest(
+                    prompt: "Hello",
+                    providerOptions: providerOptions
+                )
+            )
+        }
+    }
+
+    @Test("OpenAI raw response API preserves provider-specific output items")
+    func openAIRawResponseAPIPreservesProviderSpecificItems() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "id": "resp_raw",
+                      "model": "gpt-5",
+                      "status": "completed",
+                      "output": [
+                        {
+                          "id": "msg_1",
+                          "type": "message",
+                          "role": "assistant",
+                          "content": [
+                            {
+                              "type": "output_text",
+                              "text": "Done"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "ws_1",
+                          "type": "web_search_call",
+                          "status": "completed",
+                          "summary": [
+                            {
+                              "text": "Searched the web."
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let response = try await provider.responsesModel("gpt-5").createResponse(
+            OpenAIResponseRequest(input: [.user("Find the answer.")])
+        )
+
+        #expect(response.id == "resp_raw")
+        #expect(response.output.count == 2)
+        #expect(response.output.last?.type == "web_search_call")
+        #expect(response.output.last?.summaries == ["Searched the web."])
+    }
+
+    @Test("OpenAI legacy chat completions adapter remains available")
+    func openAILegacyChatCompletionsModelStillWorks() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "model": "gpt-test",
+                      "choices": [{
+                        "message": {
+                          "content": "Hello from legacy OpenAI",
+                          "tool_calls": [{
+                            "id": "call_1",
+                            "function": {
+                              "name": "lookup_weather",
+                              "arguments": "{\\"city\\":\\"Tokyo\\"}"
+                            }
+                          }]
+                        },
+                        "finish_reason": "tool_calls"
+                      }],
+                      "usage": {
+                        "prompt_tokens": 5,
+                        "completion_tokens": 7,
+                        "total_tokens": 12
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let response = try await provider.chatCompletionsModel("gpt-test").generate(
+            request: TextGenerationRequest(prompt: "Hello")
+        )
+
+        #expect(response.text == "Hello from legacy OpenAI")
+        #expect(response.toolInvocations.first?.name == "lookup_weather")
+        #expect(response.usage?.totalTokens == 12)
+    }
+
+    @Test("OpenAI legacy chat completions ignore Responses-only provider options")
+    func openAILegacyChatCompletionsIgnoreResponsesOnlyOptions() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "model": "gpt-test",
+                      "choices": [{
+                        "message": {
+                          "content": "Legacy OpenAI"
+                        },
+                        "finish_reason": "stop"
+                      }]
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setOpenAI(
+            OpenAIProviderOptions(
+                user: "legacy-user",
+                instructions: "Ignore this for chat completions.",
+                previousResponseID: "resp_previous",
+                conversationID: "conv_123",
+                background: true,
+                nativeTools: [.webSearch()]
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        _ = try await provider.chatCompletionsModel("gpt-test").generate(
+            request: TextGenerationRequest(
+                prompt: "Hello",
+                providerOptions: providerOptions
+            )
+        )
+
+        let body = try decodeRequestBody(from: transport)
+        let object = try #require(body.objectValue)
+
+        #expect(object["user"]?.stringValue == "legacy-user")
+        #expect(object["instructions"] == nil)
+        #expect(object["previous_response_id"] == nil)
+        #expect(object["conversation_id"] == nil)
+        #expect(object["background"] == nil)
+        #expect(object["native_tools"] == nil)
+    }
+
+    @Test("OpenAI file helpers upload and retrieve file metadata")
+    func openAIFileHelpersRoundTripMetadata() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "id": "file_123",
+                      "filename": "notes.txt",
+                      "bytes": 12,
+                      "purpose": "assistants"
+                    }
+                    """.utf8
+                )
+            )
+        )
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "id": "file_123",
+                      "filename": "notes.txt",
+                      "bytes": 12,
+                      "purpose": "assistants"
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let uploaded = try await provider.uploadFile(
+            OpenAIFileUploadRequest(
+                data: Data("hello world!".utf8),
+                fileName: "notes.txt",
+                mimeType: "text/plain"
+            )
+        )
+        let retrieved = try await provider.retrieveFile("file_123")
+
+        #expect(uploaded.id == "file_123")
+        #expect(retrieved.fileName == "notes.txt")
+        #expect(transport.requests.count == 2)
+        #expect(transport.requests[0].url.path.hasSuffix("/files"))
+        #expect(transport.requests[0].headers["Content-Type"]?.contains("multipart/form-data") == true)
+        #expect(transport.requests[1].url.path.hasSuffix("/files/file_123"))
+    }
+
+    @Test("OpenAI realtime session helpers and websocket client work together")
+    func openAIRealtimeHelpersWorkTogether() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "value": "ek_test_123",
+                      "expires_at": 1735689600,
+                      "session": {
+                        "id": "sess_123",
+                        "type": "realtime",
+                        "model": "gpt-realtime",
+                        "audio": {
+                          "output": {
+                            "voice": "marin"
+                          }
+                        }
+                      },
+                      "client_secret": {
+                        "value": "ek_test_legacy"
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let session = try await provider.createRealtimeClientSecret(
+            OpenAIRealtimeSessionRequest(
+                modelID: "gpt-realtime",
+                instructions: "Be helpful.",
+                outputModalities: ["audio"],
+                audio: OpenAIRealtimeAudioConfiguration(
+                    output: OpenAIRealtimeOutputAudioConfiguration(voice: "marin")
+                ),
+                include: ["response.output_text.logprobs"]
+            )
+        )
+
+        #expect(session.id == "sess_123")
+        #expect(session.clientSecret == "ek_test_123")
+        #expect(transport.requests.first?.url.path.hasSuffix("/realtime/client_secrets") == true)
+
+        let sessionBody = try decodeRequestBody(from: transport)
+        let sessionObject = try #require(sessionBody.objectValue?["session"]?.objectValue)
+        #expect(sessionObject["instructions"]?.stringValue == "Be helpful.")
+        #expect(sessionObject["output_modalities"]?.arrayValue?.compactMap(\.stringValue) == ["audio"])
+        #expect(sessionObject["audio"]?.objectValue?["output"]?.objectValue?["voice"]?.stringValue == "marin")
+
+        let websocket = MockWebSocketTransport()
+        await websocket.connection.enqueue(text: #"{"type":"response.output_text.delta","delta":"Hello"}"#)
+        await websocket.connection.enqueue(text: #"{"type":"response.done"}"#)
+
+        let client = try provider.realtimeClient(
+            modelID: "gpt-realtime",
+            clientSecret: "ek_test_123",
+            transport: websocket
+        )
+
+        try await client.send(.responseCreate())
+        let sentTexts = await websocket.connection.sentTexts
+        #expect(sentTexts.count == 1)
+        let websocketRequests = await websocket.requests
+        #expect(websocketRequests.first?.url.absoluteString.contains("model=gpt-realtime") == true)
+
+        var sawTextDelta = false
+        var sawCompletion = false
+        for try await event in await client.events() {
+            switch event {
+            case .responseTextDelta(let delta):
+                sawTextDelta = (delta == "Hello")
+            case .responseCompleted:
+                sawCompletion = true
+            default:
+                break
+            }
+
+            if sawTextDelta && sawCompletion {
+                break
+            }
+        }
+
+        #expect(sawTextDelta)
+        #expect(sawCompletion)
+    }
+
+    @Test("OpenAI compatibility realtime sessions keep the flat request shape")
+    func openAIRealtimeSessionCompatibilityHelperUsesFlatPayload() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "id": "sess_compat",
+                      "type": "realtime",
+                      "model": "gpt-realtime",
+                      "client_secret": {
+                        "value": "ek_compat"
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let _ = try await provider.createRealtimeSession(
+            OpenAIRealtimeSessionRequest(
+                modelID: "gpt-realtime",
+                voice: "alloy"
+            )
+        )
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["model"]?.stringValue == "gpt-realtime")
+        #expect(body.objectValue?["audio"]?.objectValue?["output"]?.objectValue?["voice"]?.stringValue == "alloy")
+        #expect(body.objectValue?["session"] == nil)
+    }
+
+    @Test("OpenAI image variations reject non-dall-e-2 models")
+    func openAIImageVariationsRejectUnsupportedModels() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.imageModel("gpt-image-1").varyImage(
+                request: OpenAIImageVariationRequest(image: Data("png".utf8))
+            )
+        }
+    }
+
+    @Test("OpenAI speech streaming rejects legacy tts models")
+    func openAISpeechStreamingRejectsLegacyTTSModels() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+        let stream = provider.speechModel("tts-1").streamSpeech(
+            request: SpeechGenerationRequest(prompt: "Hello", voice: "alloy")
+        )
+
+        var iterator = stream.makeAsyncIterator()
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await iterator.next()
+        }
+    }
+
+    @Test("OpenAI transcription validation rejects unsupported format combinations")
+    func openAITranscriptionValidationRejectsUnsupportedFormats() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.transcriptionModel("gpt-4o-mini-transcribe").transcribeDetailed(
+                request: TranscriptionRequest(
+                    audio: Data("audio".utf8),
+                    fileName: "clip.wav",
+                    mimeType: "audio/wav"
+                ),
+                options: OpenAITranscriptionOptions(responseFormat: .verboseJSON)
+            )
+        }
+    }
+
+    @Test("OpenAI diarized transcription validation rejects prompt and logprobs")
+    func openAIDiarizedTranscriptionValidationRejectsUnsupportedOptions() async throws {
+        let transport = MockHTTPTransport()
+        let provider = try OpenAIProvider(apiKey: "test", transport: transport)
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.transcriptionModel("gpt-4o-transcribe-diarize").transcribeDetailed(
+                request: TranscriptionRequest(
+                    audio: Data("audio".utf8),
+                    fileName: "meeting.wav",
+                    mimeType: "audio/wav",
+                    prompt: "Continue the last segment."
+                ),
+                options: OpenAITranscriptionOptions(
+                    responseFormat: .diarizedJSON,
+                    includeLogprobs: true
+                )
+            )
+        }
     }
 
     @Test("Anthropic adapter streams text deltas and tool calls")
@@ -516,5 +1070,18 @@ struct TransportAndProviderTests {
 
         #expect(response.text == "Hello from Gateway")
         #expect(response.modelID == "openai/gpt-test")
+    }
+}
+
+private func decodeRequestBody(from transport: MockHTTPTransport, at index: Int = 0) throws -> JSONValue {
+    let request = try #require(transport.requests[safe: index])
+    let body = try #require(request.body)
+    return try JSONValue.decode(body)
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else { return nil }
+        return self[index]
     }
 }

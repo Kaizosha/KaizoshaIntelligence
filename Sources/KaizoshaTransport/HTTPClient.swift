@@ -100,6 +100,7 @@ package final class MockHTTPTransport: HTTPTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var responses: [Result<HTTPResponse, Error>] = []
     private var streams: [Result<[String], Error>] = []
+    package private(set) var requests: [HTTPRequest] = []
 
     package init() {}
 
@@ -128,11 +129,13 @@ package final class MockHTTPTransport: HTTPTransport, @unchecked Sendable {
     }
 
     package func execute(_ request: HTTPRequest) async throws -> HTTPResponse {
-        try dequeueResponse(for: request).get()
+        record(request)
+        return try dequeueResponse(for: request).get()
     }
 
     package func streamLines(_ request: HTTPRequest) -> AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream { continuation in
+        record(request)
+        return AsyncThrowingStream { continuation in
             Task {
                 do {
                     guard self.hasQueuedStream else {
@@ -149,6 +152,12 @@ package final class MockHTTPTransport: HTTPTransport, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    private func record(_ request: HTTPRequest) {
+        lock.lock()
+        requests.append(request)
+        lock.unlock()
     }
 
     private var hasQueuedStream: Bool {

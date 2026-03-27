@@ -5,6 +5,8 @@ Kaizosha Intelligence is a Swift-first AI SDK with a provider-agnostic core and 
 ## Highlights
 
 - Unified text generation and streaming APIs
+- OpenAI Responses-first language adapter with explicit legacy Chat Completions fallback
+- OpenAI-only raw Responses, files, GPT-image edits, DALL-E 2 variations, speech streaming on compatible TTS models, translation, and Realtime APIs
 - Typed structured output with `Schema<Value>`
 - Deterministic tool calling
 - Embeddings, image generation, speech generation, and transcription abstractions
@@ -29,11 +31,58 @@ import KaizoshaOpenAI
 let provider = try OpenAIProvider()
 let response = try await generateText(
     prompt: "Explain actors in one sentence.",
-    using: provider.languageModel("gpt-4o-mini")
+    using: provider.languageModel("gpt-5")
 )
 
 print(response.text)
 ```
+
+`OpenAIProvider.languageModel(_:)` is Responses-backed by default. Use `responsesModel(_:)` for explicit raw Responses access and `chatCompletionsModel(_:)` only when you need legacy compatibility.
+
+## OpenAI Responses API
+
+```swift
+import KaizoshaOpenAI
+
+let provider = try OpenAIProvider()
+let model = provider.responsesModel("gpt-5")
+
+let response = try await model.createResponse(
+    OpenAIResponseRequest(
+        input: [
+            .system("You explain Swift clearly."),
+            .user("Describe actor isolation in one sentence.")
+        ],
+        instructions: "Prefer plain language.",
+        reasoningSummary: .concise,
+        verbosity: .low
+    )
+)
+```
+
+## OpenAI Realtime API
+
+```swift
+import KaizoshaOpenAI
+
+let provider = try OpenAIProvider()
+let session = try await provider.createRealtimeClientSecret(
+    OpenAIRealtimeSessionRequest(
+        modelID: "gpt-realtime",
+        outputModalities: ["audio"],
+        audio: OpenAIRealtimeAudioConfiguration(
+            output: OpenAIRealtimeOutputAudioConfiguration(voice: "marin")
+        )
+    )
+)
+
+let client = try provider.realtimeClient(
+    modelID: session.modelID,
+    clientSecret: session.clientSecret
+)
+```
+
+`createRealtimeClientSecret(_:)` is the primary Realtime helper. `createRealtimeSession(_:)` remains available as a compatibility helper for the legacy `/realtime/sessions` shape.
 
 ## Live Model Discovery
 
@@ -47,6 +96,15 @@ for model in models.prefix(5) {
     print(model.id)
 }
 ```
+
+## Example Executables
+
+- `KaizoshaCLIExample`
+- `KaizoshaServerExample`
+- `KaizoshaProviderComparisonExample`
+- `KaizoshaOpenAIResponsesExample`
+- `KaizoshaOpenAIBuiltInToolsExample`
+- `KaizoshaOpenAIRealtimeExample`
 
 ## Documentation
 

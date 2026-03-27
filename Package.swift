@@ -49,6 +49,18 @@ let package = Package(
             name: "KaizoshaProviderComparisonExample",
             targets: ["KaizoshaProviderComparisonExample"]
         ),
+        .executable(
+            name: "KaizoshaOpenAIResponsesExample",
+            targets: ["KaizoshaOpenAIResponsesExample"]
+        ),
+        .executable(
+            name: "KaizoshaOpenAIBuiltInToolsExample",
+            targets: ["KaizoshaOpenAIBuiltInToolsExample"]
+        ),
+        .executable(
+            name: "KaizoshaOpenAIRealtimeExample",
+            targets: ["KaizoshaOpenAIRealtimeExample"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.1.0"),
@@ -102,6 +114,21 @@ let package = Package(
             ]
             ,
             path: "Examples/ProviderComparisonExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaOpenAIResponsesExample",
+            dependencies: ["KaizoshaOpenAI"],
+            path: "Examples/OpenAIResponsesExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaOpenAIBuiltInToolsExample",
+            dependencies: ["KaizoshaOpenAI"],
+            path: "Examples/OpenAIBuiltInToolsExample"
+        ),
+        .executableTarget(
+            name: "KaizoshaOpenAIRealtimeExample",
+            dependencies: ["KaizoshaOpenAI"],
+            path: "Examples/OpenAIRealtimeExample"
         ),
         .testTarget(
             name: "KaizoshaSDKTests",

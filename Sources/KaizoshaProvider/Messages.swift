@@ -51,20 +51,60 @@ public struct AudioContent: Sendable, Hashable {
 
 /// File content included in prompts.
 public struct FileContent: Sendable, Hashable {
-    /// The inline file data.
-    public var data: Data
+    /// The inline file data when the file is carried in the message payload.
+    public var data: Data?
 
-    /// The file name.
-    public var fileName: String
+    /// The file name when inline bytes are supplied.
+    public var fileName: String?
 
     /// The file MIME type.
     public var mimeType: String
 
+    /// The provider-managed file identifier when the file is already uploaded.
+    public var providerFileID: String?
+
+    /// The provider namespace that owns the uploaded file identifier.
+    public var providerNamespace: String?
+
     /// Creates file content from raw bytes.
     public init(data: Data, fileName: String, mimeType: String = "application/octet-stream") {
+        self.init(
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            providerFileID: nil,
+            providerNamespace: nil
+        )
+    }
+
+    /// Creates file content from an existing provider-managed file identifier.
+    public init(
+        providerFileID: String,
+        providerNamespace: String,
+        fileName: String? = nil,
+        mimeType: String = "application/octet-stream"
+    ) {
+        self.init(
+            data: nil,
+            fileName: fileName,
+            mimeType: mimeType,
+            providerFileID: providerFileID,
+            providerNamespace: providerNamespace
+        )
+    }
+
+    private init(
+        data: Data?,
+        fileName: String?,
+        mimeType: String,
+        providerFileID: String?,
+        providerNamespace: String?
+    ) {
         self.data = data
         self.fileName = fileName
         self.mimeType = mimeType
+        self.providerFileID = providerFileID
+        self.providerNamespace = providerNamespace
     }
 }
 

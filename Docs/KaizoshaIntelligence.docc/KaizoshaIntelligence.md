@@ -43,6 +43,13 @@ The package is split into a provider-neutral core plus provider-specific adapter
 - <doc:Multimodal>
 - <doc:SupportMatrix>
 
+### OpenAI
+
+- <doc:OpenAIResponses>
+- <doc:OpenAIMedia>
+- <doc:OpenAIRealtime>
+- <doc:OpenAIParityNotes>
+
 ### Deployment
 
 - <doc:GatewayUsage>
