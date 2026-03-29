@@ -617,7 +617,7 @@ public struct GoogleContentModel: Sendable {
                     )
 
                     var finishReason: FinishReason = .unknown
-                    var emittedToolCalls: Set<String> = []
+                    var emittedToolCalls: Set<StreamedToolCallKey> = []
 
                     for try await event in stream {
                         guard event.data.isEmpty == false else { continue }
@@ -629,21 +629,22 @@ public struct GoogleContentModel: Sendable {
                             continuation.yield(.usage(usage))
                         }
 
-                        for candidate in decoded.candidates {
+                        for (candidateOffset, candidate) in decoded.candidates.enumerated() {
                             if let groundingMetadata = candidate.groundingMetadata {
                                 continuation.yield(.grounding(groundingMetadata))
                             }
 
-                            for part in candidate.content.parts {
+                            for (partOffset, part) in candidate.content.parts.enumerated() {
                                 if let text = part.text, text.isEmpty == false {
                                     continuation.yield(.textDelta(text))
                                 }
 
                                 if let functionCall = part.functionCall {
-                                    let argsSignature = try functionCall.args?.compactString() ?? "{}"
-                                    let signature = [functionCall.name, argsSignature].joined(separator: "|")
-                                    if emittedToolCalls.contains(signature) == false {
-                                        emittedToolCalls.insert(signature)
+                                    let key = StreamedToolCallKey(
+                                        candidateIndex: candidate.index ?? candidateOffset,
+                                        partIndex: partOffset
+                                    )
+                                    if emittedToolCalls.insert(key).inserted {
                                         continuation.yield(
                                             .toolCall(
                                                 ToolInvocation(
@@ -732,6 +733,11 @@ public struct GoogleContentModel: Sendable {
             return
         }
     }
+}
+
+private struct StreamedToolCallKey: Hashable {
+    let candidateIndex: Int
+    let partIndex: Int
 }
 
 /// A provider-neutral Gemini language model.

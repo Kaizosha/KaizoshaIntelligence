@@ -28,6 +28,15 @@ struct TransportAndProviderTests {
         #expect(events == ["delta:hello", "message:world"])
     }
 
+    @Test("Streaming line buffer preserves chunk boundaries and blank lines")
+    func streamingLineBufferHandlesChunkedData() {
+        var buffer = StreamingLineBuffer()
+
+        #expect(buffer.append(Data("data: hel".utf8)).isEmpty)
+        #expect(buffer.append(Data("lo\n\nid: evt_1".utf8)) == ["data: hello", ""])
+        #expect(buffer.finish() == ["id: evt_1"])
+    }
+
     @Test("HTTP client retries retryable status codes")
     func httpClientRetries() async throws {
         let transport = MockHTTPTransport()
@@ -1022,6 +1031,32 @@ struct TransportAndProviderTests {
 
         #expect(text == "Hello Gemini")
         #expect(toolName == "lookup_weather")
+    }
+
+    @Test("Google streaming preserves duplicate identical function calls at different positions")
+    func googleStreamingPreservesDuplicateFunctionCalls() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            stream: [
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"lookup_weather\",\"args\":{\"city\":\"Tokyo\"}}},{\"functionCall\":{\"name\":\"lookup_weather\",\"args\":{\"city\":\"Tokyo\"}}}]},\"finishReason\":\"STOP\"}]}",
+                "",
+            ]
+        )
+
+        let provider = try GoogleProvider(apiKey: "test", transport: transport)
+        let stream = provider.languageModel("gemini-test").stream(
+            request: TextGenerationRequest(prompt: "Hello")
+        )
+
+        var toolCalls: [ToolInvocation] = []
+        for try await event in stream {
+            if case .toolCall(let invocation) = event {
+                toolCalls.append(invocation)
+            }
+        }
+
+        #expect(toolCalls.count == 2)
+        #expect(toolCalls.allSatisfy { $0.name == "lookup_weather" })
     }
 
     @Test("Google content model counts tokens with cached-content requests")

@@ -114,6 +114,104 @@ struct CoreSDKTests {
         #expect(response.toolResults.count == 1)
         #expect(response.toolResults.first?.isError == false)
     }
+
+    @Test("Automatic tool execution streams tool results and follow-up text")
+    func automaticToolExecutionStreamsFollowUp() async throws {
+        struct WeatherInput: Codable, Sendable {
+            let city: String
+        }
+
+        struct WeatherOutput: Codable, Sendable {
+            let forecast: String
+        }
+
+        let tool = Tool<WeatherInput, WeatherOutput>(
+            name: "lookup_weather",
+            description: "Returns a weather forecast.",
+            inputSchema: Schema(
+                name: "WeatherInput",
+                description: "The weather lookup payload.",
+                jsonSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "city": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array([.string("city")]),
+                ])
+            ),
+            execute: { input, _ in
+                WeatherOutput(forecast: "Sunny in \(input.city)")
+            }
+        )
+
+        let firstResponse = TextGenerationResponse(
+            modelID: "stub",
+            message: .assistant(parts: [
+                .toolCall(
+                    ToolInvocation(
+                        id: "call_1",
+                        name: "lookup_weather",
+                        input: .object(["city": .string("Tokyo")])
+                    )
+                ),
+            ]),
+            text: "",
+            toolInvocations: [
+                ToolInvocation(
+                    id: "call_1",
+                    name: "lookup_weather",
+                    input: .object(["city": .string("Tokyo")])
+                ),
+            ],
+            usage: Usage(inputTokens: 4),
+            finishReason: .toolCalls
+        )
+
+        let secondResponse = TextGenerationResponse(
+            modelID: "stub",
+            message: .assistant("Sunny in Tokyo."),
+            text: "Sunny in Tokyo.",
+            usage: Usage(outputTokens: 6, totalTokens: 10),
+            finishReason: .stop
+        )
+
+        let model = ScriptedLanguageModel(responses: [firstResponse, secondResponse])
+        let stream = streamText(
+            using: model,
+            request: TextGenerationRequest(
+                prompt: "What's the weather?",
+                tools: ToolRegistry([tool]),
+                toolExecution: .automaticSingleStep
+            )
+        )
+
+        var streamedText = ""
+        var sawToolCall = false
+        var streamedToolResults: [ToolResult] = []
+        var usageEvents: [Usage] = []
+
+        for try await event in stream {
+            switch event {
+            case .textDelta(let delta):
+                streamedText += delta
+            case .toolCall(let invocation):
+                sawToolCall = sawToolCall || invocation.name == "lookup_weather"
+            case .toolResult(let result):
+                streamedToolResults.append(result)
+            case .usage(let usage):
+                usageEvents.append(usage)
+            default:
+                break
+            }
+        }
+
+        #expect(sawToolCall)
+        #expect(streamedText == "Sunny in Tokyo.")
+        #expect(streamedToolResults.count == 1)
+        #expect(streamedToolResults.first?.invocationID == "call_1")
+        #expect(usageEvents.map(\.inputTokens).contains(4))
+        #expect(usageEvents.map(\.outputTokens).contains(6))
+    }
 }
 
 private actor ResponseQueue {

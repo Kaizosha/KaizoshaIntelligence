@@ -47,7 +47,8 @@ public func streamText(
             do {
                 let initial = try await ToolLoopCoordinator.collectStream(
                     from: model.stream(request: request),
-                    into: continuation
+                    into: continuation,
+                    modelID: model.id
                 )
 
                 guard request.toolExecution == .automaticSingleStep,
@@ -72,7 +73,8 @@ public func streamText(
 
                 _ = try await ToolLoopCoordinator.collectStream(
                     from: model.stream(request: followUpRequest),
-                    into: continuation
+                    into: continuation,
+                    modelID: model.id
                 )
                 continuation.finish()
             } catch {
@@ -273,7 +275,8 @@ private enum ToolLoopCoordinator {
 
     static func collectStream(
         from stream: AsyncThrowingStream<TextStreamEvent, Error>,
-        into continuation: AsyncThrowingStream<TextStreamEvent, Error>.Continuation
+        into continuation: AsyncThrowingStream<TextStreamEvent, Error>.Continuation,
+        modelID: String
     ) async throws -> TextGenerationResponse {
         var text = ""
         var toolInvocations: [ToolInvocation] = []
@@ -294,7 +297,7 @@ private enum ToolLoopCoordinator {
             case .toolResult(let result):
                 toolResults.append(result)
             case .usage(let value):
-                usage = value
+                usage = mergeUsage(usage, with: value)
             case .finished(let value):
                 finishReason = value
             }
@@ -303,13 +306,21 @@ private enum ToolLoopCoordinator {
         let parts = (text.isEmpty ? [] : [MessagePart.text(text)]) + toolInvocations.map(MessagePart.toolCall)
         let assistantMessage = Message(role: .assistant, parts: parts)
         return TextGenerationResponse(
-            modelID: "stream",
+            modelID: modelID,
             message: assistantMessage,
             text: text,
             toolInvocations: toolInvocations,
             toolResults: toolResults,
             usage: usage,
             finishReason: finishReason
+        )
+    }
+
+    private static func mergeUsage(_ current: Usage?, with update: Usage) -> Usage {
+        Usage(
+            inputTokens: update.inputTokens ?? current?.inputTokens,
+            outputTokens: update.outputTokens ?? current?.outputTokens,
+            totalTokens: update.totalTokens ?? current?.totalTokens
         )
     }
 }

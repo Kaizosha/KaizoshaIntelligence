@@ -106,36 +106,10 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
 
         return AsyncThrowingStream { continuation in
 #if os(Linux)
-            let dataTask = session.dataTask(with: urlRequest) { data, response, error in
-                do {
-                    if let error {
-                        throw error
-                    }
-
-                    guard let data, let response else {
-                        throw KaizoshaError.invalidResponse("The transport did not return data.")
-                    }
-
-                    let httpResponse = try self.validatedHTTPResponse(from: response)
-
-                    guard (200..<300).contains(httpResponse.statusCode) else {
-                        let body = String(decoding: data, as: UTF8.self)
-                        throw KaizoshaError.httpFailure(statusCode: httpResponse.statusCode, body: body)
-                    }
-
-                    for line in self.bufferedLines(from: data) {
-                        continuation.yield(line)
-                    }
-
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-
-            dataTask.resume()
+            let coordinator = URLSessionLineStreamCoordinator(continuation: continuation)
+            coordinator.start(with: urlRequest)
             continuation.onTermination = { _ in
-                dataTask.cancel()
+                coordinator.cancel()
             }
 #else
             let task = Task {
@@ -215,6 +189,174 @@ public final class URLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
         return urlRequest
     }
 }
+
+#if os(Linux)
+private final class URLSessionLineStreamCoordinator: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+
+    private var continuation: AsyncThrowingStream<String, Error>.Continuation?
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var lineBuffer = StreamingLineBuffer()
+    private var errorBody = Data()
+    private var statusCode: Int?
+    private var isCancelled = false
+    private var isFinished = false
+
+    init(continuation: AsyncThrowingStream<String, Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func start(with request: URLRequest) {
+        let session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+        let task = session.dataTask(with: request)
+
+        lock.lock()
+        self.session = session
+        self.task = task
+        lock.unlock()
+
+        task.resume()
+    }
+
+    func cancel() {
+        let task: URLSessionDataTask?
+        let session: URLSession?
+
+        lock.lock()
+        isCancelled = true
+        task = self.task
+        session = self.session
+        lock.unlock()
+
+        task?.cancel()
+        session?.invalidateAndCancel()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        do {
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw KaizoshaError.invalidResponse("The server response was not an HTTPURLResponse.")
+            }
+
+            lock.lock()
+            statusCode = httpResponse.statusCode
+            lock.unlock()
+            completionHandler(.allow)
+        } catch {
+            finish(throwing: error)
+            completionHandler(.cancel)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let linesToYield: [String]
+        let continuation: AsyncThrowingStream<String, Error>.Continuation?
+
+        lock.lock()
+        if let statusCode, (200..<300).contains(statusCode) {
+            linesToYield = lineBuffer.append(data)
+        } else {
+            errorBody.append(data)
+            linesToYield = []
+        }
+        continuation = self.continuation
+        lock.unlock()
+
+        for line in linesToYield {
+            continuation?.yield(line)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error {
+            if isCancellation(error) {
+                finish()
+            } else {
+                finish(throwing: error)
+            }
+            return
+        }
+
+        let linesToYield: [String]
+        let completionError: Error?
+        let continuation: AsyncThrowingStream<String, Error>.Continuation?
+
+        lock.lock()
+        if let statusCode, (200..<300).contains(statusCode) {
+            linesToYield = lineBuffer.finish()
+            completionError = nil
+        } else if let statusCode {
+            linesToYield = []
+            completionError = KaizoshaError.httpFailure(
+                statusCode: statusCode,
+                body: String(decoding: errorBody, as: UTF8.self)
+            )
+        } else {
+            linesToYield = []
+            completionError = KaizoshaError.invalidResponse("The transport did not return an HTTP response.")
+        }
+        continuation = self.continuation
+        lock.unlock()
+
+        for line in linesToYield {
+            continuation?.yield(line)
+        }
+
+        if let completionError {
+            finish(throwing: completionError)
+        } else {
+            finish()
+        }
+    }
+
+    private func finish(throwing error: Error? = nil) {
+        let continuation: AsyncThrowingStream<String, Error>.Continuation?
+        let session: URLSession?
+
+        lock.lock()
+        guard isFinished == false else {
+            lock.unlock()
+            return
+        }
+        isFinished = true
+        continuation = self.continuation
+        self.continuation = nil
+        session = self.session
+        self.session = nil
+        task = nil
+        lock.unlock()
+
+        if let error {
+            continuation?.finish(throwing: error)
+        } else {
+            continuation?.finish()
+        }
+        session?.finishTasksAndInvalidate()
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        lock.lock()
+        let isCancelled = self.isCancelled
+        lock.unlock()
+
+        if isCancelled {
+            return true
+        }
+
+        if let urlError = error as? URLError {
+            return urlError.code == .cancelled
+        }
+
+        return false
+    }
+}
+#endif
 
 extension HTTPURLResponse {
     fileprivate var headers: [String: String] {
