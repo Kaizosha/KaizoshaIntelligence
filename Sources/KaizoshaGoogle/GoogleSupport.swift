@@ -745,26 +745,33 @@ package enum GoogleCapabilityResolver {
         let normalized = modelID.lowercased()
         let methods = Set(metadata?.supportedGenerationMethods ?? [])
         let methodAware = methods.isEmpty == false
+        let isEmbeddingFamily = normalized.contains("embedding")
+        let isImagenFamily = normalized.contains("imagen")
+        let isImageGenerationFamily = normalized.contains("preview-image-generation") || isImagenFamily
+        let isGeminiFamily = normalized.hasPrefix("gemini")
+        let isGeneralGeminiFamily = isGeminiFamily && isEmbeddingFamily == false
 
-        let supportsGenerateContent = methodAware ? methods.contains("generateContent") : normalized.contains("gemini")
+        let supportsGenerateContent = methodAware ? methods.contains("generateContent") : isGeneralGeminiFamily || isImageGenerationFamily
         let supportsStreamGenerateContent = methodAware ? methods.contains("generateContent") : supportsGenerateContent
         let supportsCountTokens = methodAware ? methods.contains("countTokens") : supportsGenerateContent
-        let supportsEmbeddings = methodAware ? methods.contains("embedContent") || methods.contains("batchEmbedContents") : normalized.contains("embedding")
-        let supportsGenerateAnswer = methodAware ? methods.contains("generateAnswer") : normalized.contains("gemini")
-        let supportsImageResponses = normalized.contains("image") || normalized.contains("imagen") || normalized.contains("vision")
-        let supportsReasoningControls = metadata?.rawMetadata?.objectValue?["thinking"]?.boolValue ?? normalized.contains("thinking")
+        let supportsEmbeddings = methodAware ? methods.contains("embedContent") || methods.contains("batchEmbedContents") : isEmbeddingFamily
+        let supportsGenerateAnswer = methodAware ? methods.contains("generateAnswer") : isGeneralGeminiFamily && isImageGenerationFamily == false
+        let supportsImageResponses = isImageGenerationFamily || normalized.contains("image") || normalized.contains("vision")
+        let supportsToolCalling = supportsGenerateContent && isImageGenerationFamily == false
+        let supportsStructuredOutput = supportsGenerateContent
+        let supportsPromptMedia = supportsGenerateContent && isImagenFamily == false
 
         return GoogleCapabilityProfile(
             capabilities: ModelCapabilities(
                 supportsStreaming: supportsStreamGenerateContent,
-                supportsToolCalling: supportsGenerateContent,
-                supportsStructuredOutput: supportsGenerateContent,
-                supportsImageInput: supportsGenerateContent,
-                supportsAudioInput: supportsGenerateContent,
-                supportsFileInput: supportsGenerateContent,
+                supportsToolCalling: supportsToolCalling,
+                supportsStructuredOutput: supportsStructuredOutput,
+                supportsImageInput: supportsPromptMedia,
+                supportsAudioInput: supportsPromptMedia,
+                supportsFileInput: supportsPromptMedia,
                 supportsBatchEmbeddings: supportsEmbeddings,
                 supportsMultipleImageOutputs: false,
-                supportsReasoningControls: supportsReasoningControls
+                supportsReasoningControls: false
             ),
             supportsGenerateContent: supportsGenerateContent,
             supportsStreamGenerateContent: supportsStreamGenerateContent,

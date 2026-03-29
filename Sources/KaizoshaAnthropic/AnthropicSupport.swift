@@ -1,0 +1,36 @@
+import Foundation
+import KaizoshaProvider
+
+package struct AnthropicCapabilityProfile: Sendable, Hashable {
+    package var capabilities: ModelCapabilities
+}
+
+package enum AnthropicCapabilityResolver {
+    package static func profile(for modelID: String) -> AnthropicCapabilityProfile {
+        let normalized = modelID.lowercased()
+        let isClaudeModel = normalized.contains("claude")
+        let supportsVision = isClaude3Family(normalized) || isClaude4Family(normalized)
+
+        return AnthropicCapabilityProfile(
+            capabilities: ModelCapabilities(
+                supportsStreaming: isClaudeModel,
+                supportsToolCalling: isClaudeModel,
+                supportsStructuredOutput: isClaudeModel,
+                supportsImageInput: supportsVision,
+                supportsAudioInput: false,
+                supportsFileInput: false,
+                supportsReasoningControls: false
+            )
+        )
+    }
+
+    private static func isClaude3Family(_ normalized: String) -> Bool {
+        normalized.contains("claude-3")
+    }
+
+    private static func isClaude4Family(_ normalized: String) -> Bool {
+        normalized.contains("claude-opus-4")
+            || normalized.contains("claude-sonnet-4")
+            || normalized.contains("claude-haiku-4")
+    }
+}

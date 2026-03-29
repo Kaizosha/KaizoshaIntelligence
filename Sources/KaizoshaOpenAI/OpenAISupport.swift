@@ -138,21 +138,17 @@ package struct OpenAICapabilityProfile: Sendable, Hashable {
 package enum OpenAICapabilityResolver {
     package static func profile(for modelID: String) -> OpenAICapabilityProfile {
         let normalized = modelID.lowercased()
-        let isEmbedding = normalized.contains("embedding")
-        let isImage = normalized.contains("image") || normalized.contains("dall-e")
-        let isSpeech = normalized.contains("tts")
-        let isTranscription = normalized.contains("transcribe") || normalized.contains("whisper")
-        let isRealtime = normalized.contains("realtime")
-        let isReasoningModel = normalized.hasPrefix("gpt-5") || normalized.hasPrefix("o1") || normalized.hasPrefix("o3") || normalized.hasPrefix("o4")
-        let supportsImageInput = normalized.hasPrefix("gpt-4o") || normalized.hasPrefix("gpt-4.1") || normalized.hasPrefix("gpt-5") || normalized.hasPrefix("o1") || normalized.hasPrefix("o3") || normalized.hasPrefix("o4")
-        let supportsAudioInput = normalized.contains("audio") || normalized.contains("transcribe") || normalized.contains("realtime")
-        let supportsStructuredOutput = isEmbedding == false && isImage == false && isSpeech == false && isTranscription == false && isRealtime == false
-        let supportsToolCalling = supportsStructuredOutput
-        let supportsResponses = isEmbedding == false && isImage == false && isSpeech == false && isTranscription == false
-        let supportsTextVerbosity = normalized.hasPrefix("gpt-5")
-        let supportsSpeechStreaming = isSpeech && normalized != "tts-1" && normalized != "tts-1-hd"
-        let supportsSpeechInstructions = supportsSpeechStreaming
-        let supportsImageVariations = normalized == "dall-e-2" || normalized.hasPrefix("dall-e-2")
+        let family = OpenAIModelFamily(normalizedID: normalized)
+        let supportsResponses = family.supportsResponses
+        let supportsStructuredOutput = family.supportsStructuredOutput
+        let supportsToolCalling = family.supportsToolCalling
+        let supportsImageInput = family.supportsImageInput
+        let supportsAudioInput = family.supportsAudioInput
+        let supportsTextVerbosity = family.supportsTextVerbosity
+        let supportsSpeechStreaming = family.supportsSpeechStreaming
+        let supportsSpeechInstructions = family.supportsSpeechInstructions
+        let supportsImageVariations = family.supportsImageVariations
+        let supportsReasoningControls = family.supportsReasoningControls
 
         return OpenAICapabilityProfile(
             capabilities: ModelCapabilities(
@@ -161,26 +157,131 @@ package enum OpenAICapabilityResolver {
                 supportsStructuredOutput: supportsStructuredOutput,
                 supportsImageInput: supportsImageInput,
                 supportsAudioInput: supportsAudioInput,
-                supportsFileInput: supportsResponses,
-                supportsBatchEmbeddings: isEmbedding,
-                supportsMultipleImageOutputs: isImage,
-                supportedSpeechFormats: isSpeech ? [.mp3, .wav, .aac, .flac, .opus, .pcm16] : [],
-                supportsTranscriptionPrompt: isTranscription,
-                supportsTranscriptionLanguageHint: isTranscription,
-                supportsReasoningControls: isReasoningModel
+                supportsFileInput: family.supportsFileInput,
+                supportsBatchEmbeddings: family.isEmbedding,
+                supportsMultipleImageOutputs: family.isImage,
+                supportedSpeechFormats: family.isSpeech ? [.mp3, .wav, .aac, .flac, .opus, .pcm16] : [],
+                supportsTranscriptionPrompt: family.isTranscription,
+                supportsTranscriptionLanguageHint: family.isTranscription,
+                supportsReasoningControls: supportsReasoningControls
             ),
             supportsResponses: supportsResponses,
-            supportsNativeTools: supportsResponses,
+            supportsNativeTools: family.supportsNativeTools,
             supportsConversationState: supportsResponses,
             supportsInstructions: supportsResponses,
             supportsTextVerbosity: supportsTextVerbosity,
-            supportsImageEdits: isImage,
+            supportsImageEdits: family.isImage,
             supportsImageVariations: supportsImageVariations,
             supportsSpeechInstructions: supportsSpeechInstructions,
             supportsSpeechStreaming: supportsSpeechStreaming,
-            supportsTranscriptionStreaming: isTranscription && normalized != "whisper-1",
-            supportsRealtime: isRealtime
+            supportsTranscriptionStreaming: family.isTranscription && normalized != "whisper-1",
+            supportsRealtime: family.isRealtime
         )
+    }
+}
+
+private struct OpenAIModelFamily {
+    let normalizedID: String
+
+    var isEmbedding: Bool {
+        normalizedID.contains("embedding")
+    }
+
+    var isImage: Bool {
+        normalizedID.contains("dall-e") || normalizedID.contains("gpt-image") || normalizedID == "image"
+    }
+
+    var isSpeech: Bool {
+        normalizedID.contains("tts")
+    }
+
+    var isTranscription: Bool {
+        normalizedID.contains("transcribe") || normalizedID.contains("whisper")
+    }
+
+    var isRealtime: Bool {
+        normalizedID.contains("realtime")
+    }
+
+    var isAudioResponsesModel: Bool {
+        normalizedID.contains("audio-preview") || normalizedID.hasPrefix("gpt-audio")
+    }
+
+    var isResponsesTextFamily: Bool {
+        if isEmbedding || isImage || isSpeech || isTranscription || isRealtime || isAudioResponsesModel {
+            return false
+        }
+
+        return normalizedID.hasPrefix("gpt-4o")
+            || normalizedID.hasPrefix("chatgpt-4o")
+            || normalizedID.hasPrefix("gpt-4.1")
+            || normalizedID.hasPrefix("gpt-5")
+            || normalizedID.hasPrefix("gpt-")
+            || normalizedID.hasPrefix("o1")
+            || normalizedID.hasPrefix("o3")
+            || normalizedID.hasPrefix("o4")
+    }
+
+    var supportsResponses: Bool {
+        isResponsesTextFamily || isAudioResponsesModel
+    }
+
+    var supportsStructuredOutput: Bool {
+        isResponsesTextFamily
+    }
+
+    var supportsToolCalling: Bool {
+        isResponsesTextFamily || isAudioResponsesModel
+    }
+
+    var supportsNativeTools: Bool {
+        isResponsesTextFamily
+    }
+
+    var supportsImageInput: Bool {
+        isResponsesTextFamily && (
+            normalizedID.hasPrefix("gpt-4o")
+                || normalizedID.hasPrefix("chatgpt-4o")
+                || normalizedID.hasPrefix("gpt-4.1")
+                || normalizedID.hasPrefix("gpt-5")
+                || normalizedID.hasPrefix("o1")
+                || normalizedID.hasPrefix("o3")
+                || normalizedID.hasPrefix("o4")
+        )
+    }
+
+    var supportsAudioInput: Bool {
+        isAudioResponsesModel
+    }
+
+    var supportsFileInput: Bool {
+        supportsResponses
+    }
+
+    var supportsReasoningControls: Bool {
+        isResponsesTextFamily
+            && (
+                normalizedID.hasPrefix("gpt-5")
+                    || normalizedID.hasPrefix("o1")
+                    || normalizedID.hasPrefix("o3")
+                    || normalizedID.hasPrefix("o4")
+            )
+    }
+
+    var supportsTextVerbosity: Bool {
+        isResponsesTextFamily && normalizedID.hasPrefix("gpt-5")
+    }
+
+    var supportsSpeechStreaming: Bool {
+        isSpeech && normalizedID != "tts-1" && normalizedID != "tts-1-hd"
+    }
+
+    var supportsSpeechInstructions: Bool {
+        supportsSpeechStreaming
+    }
+
+    var supportsImageVariations: Bool {
+        normalizedID == "dall-e-2" || normalizedID.hasPrefix("dall-e-2")
     }
 }
 

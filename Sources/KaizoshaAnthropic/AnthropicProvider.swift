@@ -128,15 +128,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
     public let id: String
 
     /// Capability metadata for the model.
-    public let capabilities = ModelCapabilities(
-        supportsStreaming: true,
-        supportsToolCalling: true,
-        supportsStructuredOutput: true,
-        supportsImageInput: true,
-        supportsAudioInput: false,
-        supportsFileInput: false,
-        supportsReasoningControls: false
-    )
+    public let capabilities: ModelCapabilities
 
     private let apiKey: String
     private let baseURL: URL
@@ -144,6 +136,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
 
     fileprivate init(id: String, apiKey: String, baseURL: URL, client: HTTPClient) {
         self.id = id
+        self.capabilities = AnthropicCapabilityResolver.profile(for: id).capabilities
         self.apiKey = apiKey
         self.baseURL = baseURL
         self.client = client

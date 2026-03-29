@@ -237,6 +237,61 @@ struct TransportAndProviderTests {
         #expect(models.first?.provider == GatewayProvider.namespace)
     }
 
+    @Test("OpenAI capability resolution differentiates text and audio response families")
+    func openAICapabilityResolutionUsesExplicitFamilies() throws {
+        let provider = try OpenAIProvider(apiKey: "test", transport: MockHTTPTransport())
+
+        let textModel = provider.languageModel("gpt-4o-mini")
+        #expect(textModel.capabilities.supportsStructuredOutput)
+        #expect(textModel.capabilities.supportsToolCalling)
+        #expect(textModel.capabilities.supportsImageInput)
+        #expect(textModel.capabilities.supportsAudioInput == false)
+
+        let audioModel = provider.languageModel("gpt-4o-audio-preview")
+        #expect(audioModel.capabilities.supportsToolCalling)
+        #expect(audioModel.capabilities.supportsStructuredOutput == false)
+        #expect(audioModel.capabilities.supportsAudioInput)
+        #expect(audioModel.capabilities.supportsImageInput == false)
+
+        let reasoningModel = provider.languageModel("gpt-5")
+        #expect(reasoningModel.capabilities.supportsReasoningControls)
+    }
+
+    @Test("Anthropic capability resolution gates image input to Claude 3 and 4 families")
+    func anthropicCapabilityResolutionUsesModelFamilies() throws {
+        let provider = try AnthropicProvider(apiKey: "test", transport: MockHTTPTransport())
+
+        let legacyModel = provider.languageModel("claude-2.1")
+        #expect(legacyModel.capabilities.supportsImageInput == false)
+        #expect(legacyModel.capabilities.supportsToolCalling)
+        #expect(legacyModel.capabilities.supportsStructuredOutput)
+
+        let modernModel = provider.languageModel("claude-3-7-sonnet-latest")
+        #expect(modernModel.capabilities.supportsImageInput)
+        #expect(modernModel.capabilities.supportsFileInput == false)
+        #expect(modernModel.capabilities.supportsReasoningControls == false)
+    }
+
+    @Test("Google capability resolution avoids advertising provider-neutral reasoning controls")
+    func googleCapabilityResolutionDisablesSharedReasoningControl() throws {
+        let provider = try GoogleProvider(apiKey: "test", transport: MockHTTPTransport())
+
+        let textModel = provider.languageModel("gemini-2.0-flash")
+        #expect(textModel.capabilities.supportsToolCalling)
+        #expect(textModel.capabilities.supportsStructuredOutput)
+        #expect(textModel.capabilities.supportsImageInput)
+        #expect(textModel.capabilities.supportsAudioInput)
+        #expect(textModel.capabilities.supportsFileInput)
+        #expect(textModel.capabilities.supportsReasoningControls == false)
+
+        let imageGenerationModel = provider.languageModel("gemini-2.0-flash-preview-image-generation")
+        #expect(imageGenerationModel.capabilities.supportsToolCalling == false)
+        #expect(imageGenerationModel.capabilities.supportsStructuredOutput)
+        #expect(imageGenerationModel.capabilities.supportsImageInput)
+        #expect(imageGenerationModel.capabilities.supportsAudioInput)
+        #expect(imageGenerationModel.capabilities.supportsReasoningControls == false)
+    }
+
     @Test("OpenAI Responses adapter parses text and tool calls")
     func openAIAdapterParsesResponse() async throws {
         let transport = MockHTTPTransport()
