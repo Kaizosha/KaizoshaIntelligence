@@ -37,6 +37,9 @@ jobs:
           swift build --product KaizoshaCLIExample
           swift build --product KaizoshaServerExample
           swift build --product KaizoshaProviderComparisonExample
+          swift build --product KaizoshaOpenAIResponsesExample
+          swift build --product KaizoshaOpenAIBuiltInToolsExample
+          swift build --product KaizoshaOpenAIRealtimeExample
           swift build --product KaizoshaGoogleGroundingExample
           swift build --product KaizoshaGoogleCachingExample
           swift build --product KaizoshaGoogleFilesExample
@@ -95,6 +98,9 @@ jobs:
           swift build --product KaizoshaCLIExample
           swift build --product KaizoshaServerExample
           swift build --product KaizoshaProviderComparisonExample
+          swift build --product KaizoshaOpenAIResponsesExample
+          swift build --product KaizoshaOpenAIBuiltInToolsExample
+          swift build --product KaizoshaOpenAIRealtimeExample
           swift build --product KaizoshaGoogleGroundingExample
           swift build --product KaizoshaGoogleCachingExample
           swift build --product KaizoshaGoogleFilesExample
