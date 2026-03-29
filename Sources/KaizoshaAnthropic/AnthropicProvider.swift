@@ -62,6 +62,16 @@ public struct AnthropicProvider: Sendable {
         AnthropicLanguageModel(id: id, apiKey: apiKey, baseURL: baseURL, client: client)
     }
 
+    /// Access to Anthropic file operations.
+    public var files: AnthropicFilesService {
+        AnthropicFilesService(apiKey: apiKey, baseURL: baseURL, client: client)
+    }
+
+    /// Access to Anthropic token-count operations.
+    public var tokens: AnthropicTokensService {
+        AnthropicTokensService(apiKey: apiKey, baseURL: baseURL, client: client)
+    }
+
     /// Fetches the live model catalog from Anthropic.
     public func listModels() async throws -> [AvailableModel] {
         var models: [AvailableModel] = []
@@ -115,10 +125,7 @@ public struct AnthropicProvider: Sendable {
     }
 
     private var catalogHeaders: [String: String] {
-        [
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-        ]
+        AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil)
     }
 }
 
@@ -144,11 +151,11 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
 
     public func generate(request: TextGenerationRequest) async throws -> TextGenerationResponse {
         try CapabilityValidator.validate(request, for: self, streaming: false)
-        let body = try messagePayload(for: request, stream: false)
+        let body = try AnthropicMessagePayloadBuilder.messagePayload(modelID: id, request: request, stream: false)
         let response = try await client.send(
             HTTPRequest(
                 url: baseURL.appendingPathComponents("messages"),
-                headers: headers,
+                headers: headers(includeFilesBeta: AnthropicMessagePayloadBuilder.usesFilesBeta(messages: request.messages)),
                 body: try body.data()
             )
         )
@@ -187,10 +194,10 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
                 do {
                     try CapabilityValidator.validate(request, for: self, streaming: true)
                     continuation.yield(.status("started"))
-                    let body = try messagePayload(for: request, stream: true)
+                    let body = try AnthropicMessagePayloadBuilder.messagePayload(modelID: id, request: request, stream: true)
                     let httpRequest = HTTPRequest(
                         url: baseURL.appendingPathComponents("messages"),
-                        headers: headers,
+                        headers: headers(includeFilesBeta: AnthropicMessagePayloadBuilder.usesFilesBeta(messages: request.messages)),
                         body: try body.data()
                     )
                     let events = await client.streamEvents(httpRequest)
@@ -306,146 +313,8 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
         }
     }
 
-    private var headers: [String: String] {
-        [
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        ]
-    }
-
-    private func messagePayload(for request: TextGenerationRequest, stream: Bool) throws -> JSONValue {
-        let normalized = MessagePipeline.normalize(request.messages)
-        let conversation = normalized.filter { $0.role != .system }
-
-        var object: [String: JSONValue] = [
-            "model": .string(id),
-            "max_tokens": .number(Double(request.generation.maxOutputTokens ?? 1024)),
-            "messages": .array(try conversation.flatMap(mapMessage)),
-        ]
-
-        if let systemPrompt = MessagePipeline.systemPrompt(from: normalized) {
-            object["system"] = .string(systemPrompt)
-        }
-        if let temperature = request.generation.temperature {
-            object["temperature"] = .number(temperature)
-        }
-        if let topP = request.generation.topP {
-            object["top_p"] = .number(topP)
-        }
-        if stream {
-            object["stream"] = .bool(true)
-        }
-        if request.tools.isEmpty == false {
-            object["tools"] = .array(request.tools.tools.map { tool in
-                .object([
-                    "name": .string(tool.name),
-                    "description": .string(tool.description),
-                    "input_schema": tool.inputSchema,
-                ])
-            })
-        }
-        if let structuredOutput = request.structuredOutput {
-            object["system"] = .string(
-                """
-                \(object["system"]?.stringValue ?? "")
-
-                Return only valid JSON matching the schema named \(structuredOutput.name):
-                \(String(data: try structuredOutput.schema.data(prettyPrinted: true), encoding: .utf8) ?? "{}")
-                """
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        }
-
-        return JSONValue.object(object).mergingObject(with: request.providerOptions.options(for: AnthropicProvider.namespace))
-    }
-
-    private func mapMessage(_ message: ModelMessage) throws -> [JSONValue] {
-        switch message.role {
-        case .system:
-            return []
-        case .user:
-            return [
-                .object([
-                    "role": .string("user"),
-                    "content": .array(try mapUserParts(message.parts)),
-                ]),
-            ]
-        case .assistant:
-            return [
-                .object([
-                    "role": .string("assistant"),
-                    "content": .array(try mapAssistantParts(message.parts)),
-                ]),
-            ]
-        case .tool:
-            let parts = try message.parts.compactMap { part -> JSONValue? in
-                guard case .toolResult(let result) = part else { return nil }
-                return .object([
-                    "type": .string("tool_result"),
-                    "tool_use_id": .string(result.invocationID),
-                    "content": .string(try result.output.compactString()),
-                    "is_error": .bool(result.isError),
-                ])
-            }
-            return [
-                .object([
-                    "role": .string("user"),
-                    "content": .array(parts),
-                ]),
-            ]
-        }
-    }
-
-    private func mapUserParts(_ parts: [ModelPart]) throws -> [JSONValue] {
-        try parts.map { part in
-            switch part {
-            case .text(let text):
-                return .object([
-                    "type": .string("text"),
-                    "text": .string(text),
-                ])
-            case .image(let image):
-                guard let data = image.data ?? (try? Data(contentsOf: image.url!)) else {
-                    throw KaizoshaError.invalidRequest("Anthropic image parts require inline data or a reachable local URL.")
-                }
-                return .object([
-                    "type": .string("image"),
-                    "source": .object([
-                        "type": .string("base64"),
-                        "media_type": .string(image.mimeType),
-                        "data": .string(data.base64EncodedString()),
-                    ]),
-                ])
-            case .audio:
-                throw KaizoshaError.unsupportedCapability(modelID: id, capability: "audio prompt parts")
-            case .file:
-                throw KaizoshaError.unsupportedCapability(modelID: id, capability: "file prompt parts")
-            case .toolCall, .toolResult:
-                throw KaizoshaError.invalidRequest("Tool parts are not valid inside Anthropic user messages.")
-            }
-        }
-    }
-
-    private func mapAssistantParts(_ parts: [ModelPart]) throws -> [JSONValue] {
-        try parts.map { part in
-            switch part {
-            case .text(let text):
-                return .object([
-                    "type": .string("text"),
-                    "text": .string(text),
-                ])
-            case .toolCall(let invocation):
-                return .object([
-                    "type": .string("tool_use"),
-                    "id": .string(invocation.id),
-                    "name": .string(invocation.name),
-                    "input": invocation.input,
-                ])
-            case .image, .audio, .file, .toolResult:
-                throw KaizoshaError.invalidRequest("Anthropic assistant messages only support text and tool call parts.")
-            }
-        }
+    private func headers(includeFilesBeta: Bool = false) -> [String: String] {
+        AnthropicRequestHeaders.make(apiKey: apiKey, includeFilesBeta: includeFilesBeta)
     }
 }
 

@@ -7,6 +7,7 @@ Kaizosha Intelligence is a Swift-first AI SDK with a provider-agnostic core and 
 - Unified text generation and streaming APIs
 - OpenAI Responses-first language adapter with explicit legacy Chat Completions fallback
 - OpenAI-only raw Responses, files, GPT-image edits, DALL-E 2 variations, speech streaming on compatible TTS models, translation, and Realtime APIs
+- Anthropic Messages plus Anthropic-only files and token-counting APIs
 - Google Gemini `generateContent` plus Google-only models, token counting, files, cached contents, file-search stores, batch jobs, Interactions, and Live APIs
 - Typed structured output with `Schema<Value>`
 - Deterministic tool calling
@@ -117,6 +118,35 @@ let tokenCount = try await provider.tokens.countTokens(
 )
 
 print(tokenCount.totalTokens ?? 0)
+```
+
+## Anthropic Files and Token Counting
+
+```swift
+import KaizoshaAnthropic
+
+let provider = try AnthropicProvider()
+let uploaded = try await provider.files.upload(
+    AnthropicFileUploadRequest(
+        data: pdfData,
+        fileName: "brief.pdf",
+        mimeType: "application/pdf"
+    )
+)
+
+let tokenCount = try await provider.tokens.countTokens(
+    modelID: "claude-3-5-sonnet-latest",
+    request: TextGenerationRequest(
+        messages: [
+            .user(parts: [
+                .file(uploaded.asFileContent()),
+                .text("Summarize the document.")
+            ])
+        ]
+    )
+)
+
+print(tokenCount.inputTokens)
 ```
 
 ## Example Executables

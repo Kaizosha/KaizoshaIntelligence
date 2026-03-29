@@ -265,10 +265,11 @@ struct TransportAndProviderTests {
         #expect(legacyModel.capabilities.supportsImageInput == false)
         #expect(legacyModel.capabilities.supportsToolCalling)
         #expect(legacyModel.capabilities.supportsStructuredOutput)
+        #expect(legacyModel.capabilities.supportsFileInput == false)
 
         let modernModel = provider.languageModel("claude-3-7-sonnet-latest")
         #expect(modernModel.capabilities.supportsImageInput)
-        #expect(modernModel.capabilities.supportsFileInput == false)
+        #expect(modernModel.capabilities.supportsFileInput)
         #expect(modernModel.capabilities.supportsReasoningControls == false)
     }
 
@@ -1013,6 +1014,180 @@ struct TransportAndProviderTests {
         #expect(response.text == "Need a tool.")
         #expect(response.toolInvocations.first?.name == "lookup_weather")
         #expect(response.finishReason == .toolCalls)
+    }
+
+    @Test("Anthropic adapter maps provider-managed files into document blocks")
+    func anthropicAdapterMapsProviderManagedFiles() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "model": "claude-3-5-sonnet-latest",
+                      "content": [{ "type": "text", "text": "Loaded" }],
+                      "stop_reason": "end_turn",
+                      "usage": {
+                        "input_tokens": 8,
+                        "output_tokens": 2
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        _ = try await provider.languageModel("claude-3-5-sonnet-latest").generate(
+            request: TextGenerationRequest(
+                messages: [
+                    .user(parts: [
+                        .file(
+                            FileContent(
+                                providerFileID: "file_123",
+                                providerNamespace: AnthropicProvider.namespace,
+                                mimeType: "application/pdf"
+                            )
+                        ),
+                        .text("Summarize this document."),
+                    ]),
+                ]
+            )
+        )
+
+        let request = try #require(transport.requests[safe: 0])
+        #expect(request.headers["anthropic-beta"] == anthropicFilesBeta)
+
+        let body = try decodeRequestBody(from: transport)
+        let content = try #require(
+            body.objectValue?["messages"]?.arrayValue?.first?.objectValue?["content"]?.arrayValue
+        )
+        let document = try #require(content.first?.objectValue)
+
+        #expect(document["type"]?.stringValue == "document")
+        #expect(document["source"]?.objectValue?["type"]?.stringValue == "file")
+        #expect(document["source"]?.objectValue?["file_id"]?.stringValue == "file_123")
+    }
+
+    @Test("Anthropic files upload uses the beta multipart API")
+    func anthropicFilesUploadUsesMultipartBeta() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "id": "file_123",
+                      "filename": "brief.pdf",
+                      "mime_type": "application/pdf",
+                      "size_bytes": 128
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let file = try await provider.files.upload(
+            AnthropicFileUploadRequest(
+                data: Data("brief".utf8),
+                fileName: "brief.pdf",
+                mimeType: "application/pdf"
+            )
+        )
+
+        #expect(file.id == "file_123")
+        #expect(file.mimeType == "application/pdf")
+
+        let request = try #require(transport.requests[safe: 0])
+        #expect(request.url.absoluteString.hasSuffix("/v1/files"))
+        #expect(request.headers["anthropic-beta"] == anthropicFilesBeta)
+        #expect(request.headers["Content-Type"]?.contains("multipart/form-data") == true)
+
+        let bodyString = String(data: try #require(request.body), encoding: .utf8)
+        #expect(bodyString?.contains("name=\"file\"; filename=\"brief.pdf\"") == true)
+    }
+
+    @Test("Anthropic token counting reuses the Messages payload shape")
+    func anthropicTokenCountingMapsMessagesPayload() async throws {
+        struct WeatherInput: Codable, Sendable {
+            let city: String
+        }
+
+        struct WeatherOutput: Codable, Sendable {
+            let summary: String
+        }
+
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "input_tokens": 42
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let tool = Tool<WeatherInput, WeatherOutput>(
+            name: "lookup_weather",
+            description: "Fetches weather.",
+            inputSchema: Schema(
+                name: "WeatherInput",
+                description: "Weather lookup input.",
+                jsonSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "city": .object([
+                            "type": .string("string"),
+                        ]),
+                    ]),
+                    "required": .array([.string("city")]),
+                ])
+            )
+        ) { input, _ in
+            WeatherOutput(summary: input.city)
+        }
+
+        let response = try await provider.tokens.countTokens(
+            modelID: "claude-3-5-sonnet-latest",
+            request: TextGenerationRequest(
+                messages: [
+                    .system("You are concise."),
+                    .user(parts: [
+                        .file(
+                            FileContent(
+                                providerFileID: "file_abc",
+                                providerNamespace: AnthropicProvider.namespace,
+                                mimeType: "application/pdf"
+                            )
+                        ),
+                        .text("Summarize the document."),
+                    ]),
+                ],
+                tools: ToolRegistry([tool])
+            )
+        )
+
+        #expect(response.inputTokens == 42)
+
+        let request = try #require(transport.requests[safe: 0])
+        #expect(request.url.absoluteString.hasSuffix("/v1/messages/count_tokens"))
+        #expect(request.headers["anthropic-beta"] == anthropicFilesBeta)
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["model"]?.stringValue == "claude-3-5-sonnet-latest")
+        #expect(body.objectValue?["system"]?.stringValue == "You are concise.")
+        #expect(body.objectValue?["tools"]?.arrayValue?.first?.objectValue?["name"]?.stringValue == "lookup_weather")
+        #expect(
+            body.objectValue?["messages"]?.arrayValue?.first?.objectValue?["content"]?.arrayValue?.first?.objectValue?["source"]?.objectValue?["file_id"]?.stringValue == "file_abc"
+        )
     }
 
     @Test("Google adapter parses text and function calls")

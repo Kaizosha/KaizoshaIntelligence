@@ -10,6 +10,7 @@ package enum AnthropicCapabilityResolver {
         let normalized = modelID.lowercased()
         let isClaudeModel = normalized.contains("claude")
         let supportsVision = isClaude3Family(normalized) || isClaude4Family(normalized)
+        let supportsDocuments = isClaude35Family(normalized) || isClaude37Family(normalized) || isClaude4Family(normalized)
 
         return AnthropicCapabilityProfile(
             capabilities: ModelCapabilities(
@@ -18,10 +19,18 @@ package enum AnthropicCapabilityResolver {
                 supportsStructuredOutput: isClaudeModel,
                 supportsImageInput: supportsVision,
                 supportsAudioInput: false,
-                supportsFileInput: false,
+                supportsFileInput: supportsDocuments,
                 supportsReasoningControls: false
             )
         )
+    }
+
+    private static func isClaude35Family(_ normalized: String) -> Bool {
+        normalized.contains("claude-3-5")
+    }
+
+    private static func isClaude37Family(_ normalized: String) -> Bool {
+        normalized.contains("claude-3-7")
     }
 
     private static func isClaude3Family(_ normalized: String) -> Bool {
@@ -29,7 +38,8 @@ package enum AnthropicCapabilityResolver {
     }
 
     private static func isClaude4Family(_ normalized: String) -> Bool {
-        normalized.contains("claude-opus-4")
+        normalized.contains("claude-4")
+            || normalized.contains("claude-opus-4")
             || normalized.contains("claude-sonnet-4")
             || normalized.contains("claude-haiku-4")
     }

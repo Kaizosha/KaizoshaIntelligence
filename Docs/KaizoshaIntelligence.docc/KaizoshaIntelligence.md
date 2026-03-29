@@ -50,6 +50,10 @@ The package is split into a provider-neutral core plus provider-specific adapter
 - <doc:OpenAIRealtime>
 - <doc:OpenAIParityNotes>
 
+### Anthropic
+
+- <doc:AnthropicFilesAndTokenCounting>
+
 ### Deployment
 
 - <doc:GatewayUsage>

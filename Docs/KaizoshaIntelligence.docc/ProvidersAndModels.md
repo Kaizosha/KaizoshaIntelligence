@@ -31,6 +31,13 @@ let provider = try AnthropicProvider()
 let model = provider.languageModel("claude-3-5-haiku-latest")
 ```
 
+Anthropic also exposes Anthropic-only service clients for files and token counting:
+
+```swift
+let files = provider.files
+let tokens = provider.tokens
+```
+
 ### Google
 
 ```swift
@@ -78,5 +85,7 @@ for model in models {
 Shared settings live in ``GenerationConfig``. Provider-specific options belong in ``ProviderOptions`` and should remain namespaced by adapter.
 
 For OpenAI, ``OpenAIProviderOptions`` maps Responses-specific settings such as `instructions`, `previousResponseID`, `conversationID`, `include`, `promptCacheKey`, `serviceTier`, native tools, and reasoning detail. The `user` field remains available only for the legacy Chat Completions adapter; the Responses path follows OpenAI's `promptCacheKey` and `safetyIdentifier` guidance instead.
+
+For Anthropic, the shared request path stays on the Messages API, while Anthropic-only helpers expose the Files API and `messages/count_tokens`. Shared Anthropic file input maps inline PDF/plain-text documents and Anthropic `file_id` references into Messages document blocks.
 
 For Google, ``GoogleProviderOptions`` maps `generationConfig`, `safetySettings`, `toolConfig`, cached-content references, storage/service-tier settings, and Google built-in tools while keeping the provider-neutral `GenerationConfig` surface stable.
