@@ -31,7 +31,7 @@ public struct GatewayProvider: Sendable {
 
     /// Creates a language model handle. Use `vendor/model` identifiers such as `openai/gpt-5.4`.
     public func languageModel(_ id: String) -> GatewayLanguageModel {
-        GatewayLanguageModel(id: id, underlying: openAICompatible.languageModel(id))
+        GatewayLanguageModel(id: id, underlying: openAICompatible.chatCompletionsModel(id))
     }
 
     /// Creates an embedding model handle.
@@ -85,9 +85,9 @@ public struct GatewayLanguageModel: LanguageModel, Sendable {
     /// Capability metadata for the model.
     public let capabilities: ModelCapabilities
 
-    private let underlying: OpenAILanguageModel
+    private let underlying: any LanguageModel
 
-    fileprivate init(id: String, underlying: OpenAILanguageModel) {
+    fileprivate init(id: String, underlying: any LanguageModel) {
         self.id = id
         self.capabilities = underlying.capabilities
         self.underlying = underlying
