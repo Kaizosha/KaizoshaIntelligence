@@ -18,6 +18,7 @@ These constraints are intentional in v1.
 - Anthropic support in v1 is focused on text, tool use, structured output, image input, file/document input, and token counting.
 - Anthropic shared file input is intentionally conservative: inline file bytes currently support PDF and plain text, while broader file reuse should flow through Anthropic file uploads and `file_id` references.
 - Anthropic prompt caching is typed and supported, but the current system-prompt mapping still treats all system messages as one combined block for explicit cache breakpoints.
+- Anthropic stable web search is supported through typed server tools, but the newer dynamic filtering variant is still deferred until Anthropic code execution is exposed.
 - Google support now covers most of the modern Gemini Developer API surface, but some pieces intentionally remain Google-only instead of being forced into the shared provider-neutral contracts.
 - Google Interactions and Live are implemented as preview Google-specific APIs. The shared `SpeechModel` and `TranscriptionModel` abstractions are still reserved for providers with stable dedicated REST surfaces that map cleanly to those contracts.
 - Gateway support in v1 follows the OpenAI-compatible route used by the current adapter.

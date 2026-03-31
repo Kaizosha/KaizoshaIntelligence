@@ -1293,6 +1293,206 @@ struct TransportAndProviderTests {
         #expect(response.usage?.cacheCreationInputTokens == 3)
     }
 
+    @Test("Anthropic web search server tools map into the tools array")
+    func anthropicWebSearchMapsServerTools() async throws {
+        struct WeatherInput: Codable, Sendable {
+            let city: String
+        }
+
+        struct WeatherOutput: Codable, Sendable {
+            let summary: String
+        }
+
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "model": "claude-sonnet-4-5",
+                      "content": [{ "type": "text", "text": "Found it." }],
+                      "stop_reason": "end_turn",
+                      "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 3
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let tool = Tool<WeatherInput, WeatherOutput>(
+            name: "lookup_weather",
+            description: "Fetches weather.",
+            inputSchema: Schema(
+                name: "WeatherInput",
+                description: "Weather lookup input.",
+                jsonSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "city": .object([
+                            "type": .string("string"),
+                        ]),
+                    ]),
+                    "required": .array([.string("city")]),
+                ])
+            )
+        ) { input, _ in
+            WeatherOutput(summary: input.city)
+        }
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setAnthropic(
+            AnthropicProviderOptions(
+                serverTools: [
+                    .webSearch(
+                        maxUses: 2,
+                        allowedDomains: ["docs.anthropic.com"],
+                        blockedDomains: ["example.com"],
+                        userLocation: AnthropicUserLocation(
+                            city: "San Francisco",
+                            region: "California",
+                            country: "US",
+                            timezone: "America/Los_Angeles"
+                        )
+                    ),
+                ]
+            )
+        )
+
+        _ = try await provider.languageModel("claude-sonnet-4-5").generate(
+            request: TextGenerationRequest(
+                messages: [.user("Find current Anthropic web-search guidance.")],
+                tools: ToolRegistry([tool]),
+                providerOptions: providerOptions
+            )
+        )
+
+        let body = try decodeRequestBody(from: transport)
+        let tools = try #require(body.objectValue?["tools"]?.arrayValue)
+        #expect(tools.count == 2)
+        #expect(tools[0].objectValue?["name"]?.stringValue == "lookup_weather")
+        #expect(tools[1].objectValue?["type"]?.stringValue == "web_search_20250305")
+        #expect(tools[1].objectValue?["name"]?.stringValue == "web_search")
+        #expect(tools[1].objectValue?["max_uses"]?.numberValue == 2.0)
+        #expect(tools[1].objectValue?["allowed_domains"]?.arrayValue?.compactMap(\.stringValue) == ["docs.anthropic.com"])
+        #expect(tools[1].objectValue?["blocked_domains"]?.arrayValue?.compactMap(\.stringValue) == ["example.com"])
+        #expect(tools[1].objectValue?["user_location"]?.objectValue?["type"]?.stringValue == "approximate")
+        #expect(tools[1].objectValue?["user_location"]?.objectValue?["timezone"]?.stringValue == "America/Los_Angeles")
+    }
+
+    @Test("Anthropic web search validation rejects duplicate tool names")
+    func anthropicWebSearchRejectsDuplicateToolNames() async throws {
+        struct SearchInput: Codable, Sendable {
+            let query: String
+        }
+
+        struct SearchOutput: Codable, Sendable {
+            let summary: String
+        }
+
+        let transport = MockHTTPTransport()
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let tool = Tool<SearchInput, SearchOutput>(
+            name: "web_search",
+            description: "Conflicts with Anthropic's server tool name.",
+            inputSchema: Schema(
+                name: "SearchInput",
+                description: "Search query input.",
+                jsonSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "query": .object([
+                            "type": .string("string"),
+                        ]),
+                    ]),
+                    "required": .array([.string("query")]),
+                ])
+            )
+        ) { input, _ in
+            SearchOutput(summary: input.query)
+        }
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setAnthropic(
+            AnthropicProviderOptions(
+                serverTools: [
+                    .webSearch(maxUses: 1),
+                ]
+            )
+        )
+
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.languageModel("claude-sonnet-4-5").generate(
+                request: TextGenerationRequest(
+                    prompt: "Search Anthropic docs.",
+                    tools: ToolRegistry([tool]),
+                    providerOptions: providerOptions
+                )
+            )
+        }
+
+        #expect(transport.requests.isEmpty)
+    }
+
+    @Test("Anthropic streaming ignores server tool events and preserves text output")
+    func anthropicStreamingIgnoresServerToolEvents() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            stream: [
+                "event: message_start",
+                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":4}}}",
+                "",
+                "event: content_block_start",
+                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"server_tool_use\",\"id\":\"srv_1\",\"name\":\"web_search\"}}",
+                "",
+                "event: content_block_delta",
+                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"opaque\"}}",
+                "",
+                "event: content_block_stop",
+                "data: {\"type\":\"content_block_stop\",\"index\":0}",
+                "",
+                "event: content_block_delta",
+                "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Grounded answer\"}}",
+                "",
+                "event: message_delta",
+                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":6}}",
+                "",
+                "event: message_stop",
+                "data: {\"type\":\"message_stop\"}",
+                "",
+            ]
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let stream = provider.languageModel("claude-sonnet-4-5").stream(
+            request: TextGenerationRequest(prompt: "Search for current Anthropic guidance.")
+        )
+
+        var text = ""
+        var toolCallCount = 0
+        var finishReason: FinishReason?
+        for try await event in stream {
+            switch event {
+            case .textDelta(let delta):
+                text += delta
+            case .toolCall:
+                toolCallCount += 1
+            case .finished(let reason):
+                finishReason = reason
+            default:
+                break
+            }
+        }
+
+        #expect(text == "Grounded answer")
+        #expect(toolCallCount == 0)
+        #expect(finishReason == .stop)
+    }
+
     @Test("Google adapter parses text and function calls")
     func googleAdapterParsesResponse() async throws {
         let transport = MockHTTPTransport()

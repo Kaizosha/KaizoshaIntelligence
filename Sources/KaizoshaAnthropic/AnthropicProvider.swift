@@ -13,15 +13,20 @@ public struct AnthropicProviderOptions: Sendable, Hashable {
     /// Anthropic prompt-caching controls.
     public var promptCaching: AnthropicPromptCachingOptions?
 
+    /// Anthropic server-side tools, such as web search.
+    public var serverTools: [AnthropicServerTool]
+
     /// Creates Anthropic-specific options.
     public init(
         userID: String? = nil,
         topK: Int? = nil,
-        promptCaching: AnthropicPromptCachingOptions? = nil
+        promptCaching: AnthropicPromptCachingOptions? = nil,
+        serverTools: [AnthropicServerTool] = []
     ) {
         self.userID = userID
         self.topK = topK
         self.promptCaching = promptCaching
+        self.serverTools = serverTools
     }
 
     /// Encodes the options into a JSON payload.
@@ -37,6 +42,9 @@ public struct AnthropicProviderOptions: Sendable, Hashable {
         }
         if let promptCaching {
             object[anthropicPromptCachingSentinelKey] = promptCaching.jsonValue
+        }
+        if serverTools.isEmpty == false {
+            object[anthropicServerToolsSentinelKey] = .array(serverTools.map(\.jsonValue))
         }
 
         return .object(object)
@@ -162,6 +170,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
 
     public func generate(request: TextGenerationRequest) async throws -> TextGenerationResponse {
         try CapabilityValidator.validate(request, for: self, streaming: false)
+        try validateServerTools(for: request)
         let body = try AnthropicMessagePayloadBuilder.messagePayload(modelID: id, request: request, stream: false)
         let response = try await client.send(
             HTTPRequest(
@@ -204,6 +213,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
             let task = Task {
                 do {
                     try CapabilityValidator.validate(request, for: self, streaming: true)
+                    try validateServerTools(for: request)
                     continuation.yield(.status("started"))
                     let body = try AnthropicMessagePayloadBuilder.messagePayload(modelID: id, request: request, stream: true)
                     let httpRequest = HTTPRequest(
@@ -349,6 +359,18 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
 
     private func headers(includeFilesBeta: Bool = false) -> [String: String] {
         AnthropicRequestHeaders.make(apiKey: apiKey, includeFilesBeta: includeFilesBeta)
+    }
+
+    private func validateServerTools(for request: TextGenerationRequest) throws {
+        let splitOptions = AnthropicRequestOptionsParser.split(
+            from: request.providerOptions.options(for: AnthropicProvider.namespace)
+        )
+        try AnthropicServerToolValidator.validate(
+            splitOptions.serverTools,
+            alongside: request.tools,
+            modelID: id,
+            capabilities: capabilities
+        )
     }
 }
 

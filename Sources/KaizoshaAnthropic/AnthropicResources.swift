@@ -30,13 +30,16 @@ package enum AnthropicRequestHeaders {
 
 package enum AnthropicMessagePayloadBuilder {
     package static func messagePayload(modelID: String, request: TextGenerationRequest, stream: Bool) throws -> JSONValue {
-        let splitOptions = AnthropicPromptCachingParser.split(from: request.providerOptions.options(for: AnthropicProvider.namespace))
+        let splitOptions = AnthropicRequestOptionsParser.split(
+            from: request.providerOptions.options(for: AnthropicProvider.namespace)
+        )
         var object = try basePayload(
             modelID: modelID,
             messages: request.messages,
             tools: request.tools,
             structuredOutput: request.structuredOutput,
-            caching: splitOptions.caching
+            caching: splitOptions.caching,
+            serverTools: splitOptions.serverTools
         )
 
         object["max_tokens"] = .number(Double(request.generation.maxOutputTokens ?? 1024))
@@ -58,13 +61,16 @@ package enum AnthropicMessagePayloadBuilder {
     }
 
     package static func countTokensPayload(modelID: String, request: TextGenerationRequest) throws -> JSONValue {
-        let splitOptions = AnthropicPromptCachingParser.split(from: request.providerOptions.options(for: AnthropicProvider.namespace))
+        let splitOptions = AnthropicRequestOptionsParser.split(
+            from: request.providerOptions.options(for: AnthropicProvider.namespace)
+        )
         var object = try basePayload(
             modelID: modelID,
             messages: request.messages,
             tools: request.tools,
             structuredOutput: request.structuredOutput,
-            caching: splitOptions.caching
+            caching: splitOptions.caching,
+            serverTools: splitOptions.serverTools
         )
 
         if let automatic = splitOptions.caching.automatic {
@@ -88,7 +94,8 @@ package enum AnthropicMessagePayloadBuilder {
         messages: [Message],
         tools: ToolRegistry,
         structuredOutput: StructuredOutputDirective?,
-        caching: AnthropicPromptCachingConfiguration
+        caching: AnthropicPromptCachingConfiguration,
+        serverTools: [AnthropicServerTool]
     ) throws -> [String: JSONValue] {
         let normalized = MessagePipeline.normalize(messages)
         let conversation = normalized.enumerated().filter { $0.element.role != .system }
@@ -114,20 +121,20 @@ package enum AnthropicMessagePayloadBuilder {
             }
         }
 
-        if tools.isEmpty == false {
-            object["tools"] = .array(
-                tools.tools.enumerated().map { index, tool in
-                    var payload: [String: JSONValue] = [
-                        "name": .string(tool.name),
-                        "description": .string(tool.description),
-                        "input_schema": tool.inputSchema,
-                    ]
-                    if let cacheControl = caching.tools[index] {
-                        payload["cache_control"] = cacheControl
-                    }
-                    return .object(payload)
+        if tools.isEmpty == false || serverTools.isEmpty == false {
+            let customToolPayloads = tools.tools.enumerated().map { index, tool in
+                var payload: [String: JSONValue] = [
+                    "name": .string(tool.name),
+                    "description": .string(tool.description),
+                    "input_schema": tool.inputSchema,
+                ]
+                if let cacheControl = caching.tools[index] {
+                    payload["cache_control"] = cacheControl
                 }
-            )
+                return JSONValue.object(payload)
+            }
+
+            object["tools"] = .array(customToolPayloads + serverTools.map(\.jsonValue))
         }
 
         return object
@@ -628,6 +635,15 @@ public struct AnthropicTokensService: Sendable {
     /// - Returns: The token-count response.
     /// - Throws: ``KaizoshaError`` when Anthropic rejects the request or returns an invalid payload.
     public func countTokens(modelID: String, request: TextGenerationRequest) async throws -> AnthropicTokenCountResponse {
+        let splitOptions = AnthropicRequestOptionsParser.split(
+            from: request.providerOptions.options(for: AnthropicProvider.namespace)
+        )
+        try AnthropicServerToolValidator.validate(
+            splitOptions.serverTools,
+            alongside: request.tools,
+            modelID: modelID,
+            capabilities: AnthropicCapabilityResolver.profile(for: modelID).capabilities
+        )
         let payload = try AnthropicMessagePayloadBuilder.countTokensPayload(modelID: modelID, request: request)
         let includeFilesBeta = AnthropicMessagePayloadBuilder.usesFilesBeta(messages: request.messages)
 
