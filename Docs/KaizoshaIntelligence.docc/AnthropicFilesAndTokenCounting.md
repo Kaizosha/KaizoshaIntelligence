@@ -1,6 +1,6 @@
 # Anthropic Files and Token Counting
 
-Kaizosha Intelligence keeps the shared Anthropic text path on the Messages API and adds Anthropic-only helpers for file uploads and token counting in `KaizoshaAnthropic`.
+Kaizosha Intelligence keeps the shared Anthropic text path on the Messages API and adds Anthropic-only helpers for file uploads, prompt caching, and token counting in `KaizoshaAnthropic`.
 
 ## Files API
 
@@ -65,8 +65,41 @@ let count = try await provider.tokens.countTokens(
 print(count.inputTokens)
 ```
 
+## Prompt Caching
+
+Anthropic prompt caching is available through `AnthropicProviderOptions.promptCaching`.
+
+```swift
+var providerOptions = ProviderOptions()
+providerOptions.setAnthropic(
+    AnthropicProviderOptions(
+        promptCaching: AnthropicPromptCachingOptions(
+            automatic: AnthropicPromptCacheControl(),
+            system: AnthropicPromptCacheControl(ttl: .oneHour),
+            messageParts: [
+                AnthropicMessagePartCacheBreakpoint(messageIndex: 1, partIndex: 0)
+            ]
+        )
+    )
+)
+
+let provider = try AnthropicProvider()
+let response = try await provider.languageModel("claude-sonnet-4-5").generate(
+    request: TextGenerationRequest(
+        messages: [
+            .system("You are a careful reviewer."),
+            .user("Review this repository snapshot.")
+        ],
+        providerOptions: providerOptions
+    )
+)
+```
+
+Use `automatic` for Anthropic's top-level caching mode, or add explicit breakpoints on the combined system prompt, tool definitions, and specific message parts. Cache usage counters are surfaced in `Usage.cacheReadInputTokens` and `Usage.cacheCreationInputTokens`.
+
 ## Notes
 
 - The Files API currently uses Anthropic's documented beta header.
+- Anthropic prompt caching supports both top-level automatic caching and explicit block-level breakpoints through typed Anthropic provider options.
 - Shared Anthropic file input is intentionally conservative today. Inline file bytes are limited to PDF and plain text; reusable uploaded files should be passed back through Anthropic file IDs.
 - Anthropic embeddings, audio input, speech, transcription, and Realtime are still outside the current Anthropic adapter surface.

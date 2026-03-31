@@ -10,10 +10,18 @@ public struct AnthropicProviderOptions: Sendable, Hashable {
     /// An optional top-k sampling value.
     public var topK: Int?
 
+    /// Anthropic prompt-caching controls.
+    public var promptCaching: AnthropicPromptCachingOptions?
+
     /// Creates Anthropic-specific options.
-    public init(userID: String? = nil, topK: Int? = nil) {
+    public init(
+        userID: String? = nil,
+        topK: Int? = nil,
+        promptCaching: AnthropicPromptCachingOptions? = nil
+    ) {
         self.userID = userID
         self.topK = topK
+        self.promptCaching = promptCaching
     }
 
     /// Encodes the options into a JSON payload.
@@ -26,6 +34,9 @@ public struct AnthropicProviderOptions: Sendable, Hashable {
 
         if let topK {
             object["top_k"] = .number(Double(topK))
+        }
+        if let promptCaching {
+            object[anthropicPromptCachingSentinelKey] = promptCaching.jsonValue
         }
 
         return .object(object)
@@ -203,6 +214,8 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
                     let events = await client.streamEvents(httpRequest)
 
                     var inputTokens: Int?
+                    var cacheReadInputTokens: Int?
+                    var cacheCreationInputTokens: Int?
                     var outputTokens: Int?
                     var finishReason: FinishReason = .unknown
                     var toolBlocks: [Int: AnthropicStreamingToolUse] = [:]
@@ -223,8 +236,22 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
 
                         if envelope.type == "message_start" {
                             inputTokens = envelope.message?.usage?.inputTokens
+                            cacheReadInputTokens = envelope.message?.usage?.cacheReadInputTokens
+                            cacheCreationInputTokens = envelope.message?.usage?.cacheCreationInputTokens
                             if let inputTokens {
-                                continuation.yield(.usage(Usage(inputTokens: inputTokens, outputTokens: outputTokens)))
+                                continuation.yield(
+                                    .usage(
+                                        Usage(
+                                            inputTokens: inputTokens,
+                                            cacheReadInputTokens: cacheReadInputTokens,
+                                            cacheCreationInputTokens: cacheCreationInputTokens,
+                                            outputTokens: outputTokens,
+                                            totalTokens: [inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens]
+                                                .compactMap { $0 }
+                                                .reduce(0, +)
+                                        )
+                                    )
+                                )
                             }
                             continue
                         }
@@ -269,14 +296,21 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
                         }
 
                         if envelope.type == "message_delta" {
+                            inputTokens = envelope.usage?.inputTokens ?? inputTokens
+                            cacheReadInputTokens = envelope.usage?.cacheReadInputTokens ?? cacheReadInputTokens
+                            cacheCreationInputTokens = envelope.usage?.cacheCreationInputTokens ?? cacheCreationInputTokens
                             outputTokens = envelope.usage?.outputTokens ?? outputTokens
                             finishReason = FinishReason(anthropicValue: envelope.delta?.stopReason)
                             continuation.yield(
                                 .usage(
                                     Usage(
                                         inputTokens: inputTokens,
+                                        cacheReadInputTokens: cacheReadInputTokens,
+                                        cacheCreationInputTokens: cacheCreationInputTokens,
                                         outputTokens: outputTokens,
-                                        totalTokens: [inputTokens, outputTokens].compactMap { $0 }.reduce(0, +)
+                                        totalTokens: [inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens]
+                                            .compactMap { $0 }
+                                            .reduce(0, +)
                                     )
                                 )
                             )
@@ -358,18 +392,26 @@ private struct AnthropicMessageResponse: Decodable {
 
     struct UsagePayload: Decodable {
         let inputTokens: Int?
+        let cacheReadInputTokens: Int?
+        let cacheCreationInputTokens: Int?
         let outputTokens: Int?
 
         private enum CodingKeys: String, CodingKey {
             case inputTokens = "input_tokens"
+            case cacheReadInputTokens = "cache_read_input_tokens"
+            case cacheCreationInputTokens = "cache_creation_input_tokens"
             case outputTokens = "output_tokens"
         }
 
         var usage: Usage {
             Usage(
                 inputTokens: inputTokens,
+                cacheReadInputTokens: cacheReadInputTokens,
+                cacheCreationInputTokens: cacheCreationInputTokens,
                 outputTokens: outputTokens,
-                totalTokens: [inputTokens, outputTokens].compactMap { $0 }.reduce(0, +)
+                totalTokens: [inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens]
+                    .compactMap { $0 }
+                    .reduce(0, +)
             )
         }
     }

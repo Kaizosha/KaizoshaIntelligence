@@ -86,6 +86,6 @@ Shared settings live in ``GenerationConfig``. Provider-specific options belong i
 
 For OpenAI, ``OpenAIProviderOptions`` maps Responses-specific settings such as `instructions`, `previousResponseID`, `conversationID`, `include`, `promptCacheKey`, `serviceTier`, native tools, and reasoning detail. The `user` field remains available only for the legacy Chat Completions adapter; the Responses path follows OpenAI's `promptCacheKey` and `safetyIdentifier` guidance instead.
 
-For Anthropic, the shared request path stays on the Messages API, while Anthropic-only helpers expose the Files API and `messages/count_tokens`. Shared Anthropic file input maps inline PDF/plain-text documents and Anthropic `file_id` references into Messages document blocks.
+For Anthropic, the shared request path stays on the Messages API, while Anthropic-only helpers expose the Files API and `messages/count_tokens`. Shared Anthropic file input maps inline PDF/plain-text documents and Anthropic `file_id` references into Messages document blocks, and prompt caching is available through `AnthropicProviderOptions.promptCaching`.
 
 For Google, ``GoogleProviderOptions`` maps `generationConfig`, `safetySettings`, `toolConfig`, cached-content references, storage/service-tier settings, and Google built-in tools while keeping the provider-neutral `GenerationConfig` surface stable.

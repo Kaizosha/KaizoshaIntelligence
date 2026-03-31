@@ -935,7 +935,7 @@ struct TransportAndProviderTests {
         transport.enqueue(
             stream: [
                 "event: message_start",
-                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}",
+                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"cache_read_input_tokens\":10,\"cache_creation_input_tokens\":2}}}",
                 "",
                 "event: content_block_delta",
                 "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}",
@@ -966,12 +966,15 @@ struct TransportAndProviderTests {
         var text = ""
         var toolName: String?
         var finishReason: FinishReason?
+        var usage: Usage?
         for try await event in stream {
             switch event {
             case .textDelta(let delta):
                 text += delta
             case .toolCall(let invocation):
                 toolName = invocation.name
+            case .usage(let value):
+                usage = value
             case .finished(let reason):
                 finishReason = reason
             default:
@@ -982,6 +985,8 @@ struct TransportAndProviderTests {
         #expect(text == "Hello")
         #expect(toolName == "lookup_weather")
         #expect(finishReason == .toolCalls)
+        #expect(usage?.cacheReadInputTokens == 10)
+        #expect(usage?.cacheCreationInputTokens == 2)
     }
 
     @Test("Anthropic adapter parses text and tool use blocks")
@@ -999,7 +1004,12 @@ struct TransportAndProviderTests {
                         { "type": "tool_use", "id": "tool_1", "name": "lookup_weather", "input": { "city": "Tokyo" } }
                       ],
                       "stop_reason": "tool_use",
-                      "usage": { "input_tokens": 3, "output_tokens": 4 }
+                      "usage": {
+                        "input_tokens": 3,
+                        "cache_read_input_tokens": 12,
+                        "cache_creation_input_tokens": 1,
+                        "output_tokens": 4
+                      }
                     }
                     """.utf8
                 )
@@ -1014,6 +1024,8 @@ struct TransportAndProviderTests {
         #expect(response.text == "Need a tool.")
         #expect(response.toolInvocations.first?.name == "lookup_weather")
         #expect(response.finishReason == .toolCalls)
+        #expect(response.usage?.cacheReadInputTokens == 12)
+        #expect(response.usage?.cacheCreationInputTokens == 1)
     }
 
     @Test("Anthropic adapter maps provider-managed files into document blocks")
@@ -1188,6 +1200,97 @@ struct TransportAndProviderTests {
         #expect(
             body.objectValue?["messages"]?.arrayValue?.first?.objectValue?["content"]?.arrayValue?.first?.objectValue?["source"]?.objectValue?["file_id"]?.stringValue == "file_abc"
         )
+    }
+
+    @Test("Anthropic prompt caching maps automatic and explicit breakpoints")
+    func anthropicPromptCachingMapsAutomaticAndExplicitBreakpoints() async throws {
+        struct WeatherInput: Codable, Sendable {
+            let city: String
+        }
+
+        struct WeatherOutput: Codable, Sendable {
+            let summary: String
+        }
+
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "model": "claude-sonnet-4-5",
+                      "content": [{ "type": "text", "text": "Cached." }],
+                      "stop_reason": "end_turn",
+                      "usage": {
+                        "input_tokens": 7,
+                        "cache_read_input_tokens": 40,
+                        "cache_creation_input_tokens": 3,
+                        "output_tokens": 2
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let tool = Tool<WeatherInput, WeatherOutput>(
+            name: "lookup_weather",
+            description: "Fetches weather.",
+            inputSchema: Schema(
+                name: "WeatherInput",
+                description: "Weather lookup input.",
+                jsonSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "city": .object([
+                            "type": .string("string"),
+                        ]),
+                    ]),
+                    "required": .array([.string("city")]),
+                ])
+            )
+        ) { input, _ in
+            WeatherOutput(summary: input.city)
+        }
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setAnthropic(
+            AnthropicProviderOptions(
+                promptCaching: AnthropicPromptCachingOptions(
+                    automatic: AnthropicPromptCacheControl(),
+                    system: AnthropicPromptCacheControl(ttl: .oneHour),
+                    tools: [
+                        AnthropicToolCacheBreakpoint(toolIndex: 0),
+                    ],
+                    messageParts: [
+                        AnthropicMessagePartCacheBreakpoint(messageIndex: 1, partIndex: 0),
+                    ]
+                )
+            )
+        )
+
+        let response = try await provider.languageModel("claude-sonnet-4-5").generate(
+            request: TextGenerationRequest(
+                messages: [
+                    .system("You are helpful."),
+                    .user("Cache this stable prefix."),
+                ],
+                tools: ToolRegistry([tool]),
+                providerOptions: providerOptions
+            )
+        )
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["cache_control"]?.objectValue?["type"]?.stringValue == "ephemeral")
+        #expect(body.objectValue?["system"]?.arrayValue?.first?.objectValue?["cache_control"]?.objectValue?["ttl"]?.stringValue == "1h")
+        #expect(body.objectValue?["tools"]?.arrayValue?.first?.objectValue?["cache_control"]?.objectValue?["type"]?.stringValue == "ephemeral")
+        #expect(
+            body.objectValue?["messages"]?.arrayValue?.first?.objectValue?["content"]?.arrayValue?.first?.objectValue?["cache_control"]?.objectValue?["type"]?.stringValue == "ephemeral"
+        )
+        #expect(response.usage?.cacheReadInputTokens == 40)
+        #expect(response.usage?.cacheCreationInputTokens == 3)
     }
 
     @Test("Google adapter parses text and function calls")

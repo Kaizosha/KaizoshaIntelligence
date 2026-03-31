@@ -319,6 +319,8 @@ private enum ToolLoopCoordinator {
     private static func mergeUsage(_ current: Usage?, with update: Usage) -> Usage {
         Usage(
             inputTokens: update.inputTokens ?? current?.inputTokens,
+            cacheReadInputTokens: update.cacheReadInputTokens ?? current?.cacheReadInputTokens,
+            cacheCreationInputTokens: update.cacheCreationInputTokens ?? current?.cacheCreationInputTokens,
             outputTokens: update.outputTokens ?? current?.outputTokens,
             totalTokens: update.totalTokens ?? current?.totalTokens
         )

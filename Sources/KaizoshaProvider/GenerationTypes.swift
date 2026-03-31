@@ -135,6 +135,12 @@ public struct Usage: Sendable, Hashable {
     /// Input token count.
     public var inputTokens: Int?
 
+    /// Input tokens read from cache when the provider exposes cache usage.
+    public var cacheReadInputTokens: Int?
+
+    /// Input tokens written to cache when the provider exposes cache usage.
+    public var cacheCreationInputTokens: Int?
+
     /// Output token count.
     public var outputTokens: Int?
 
@@ -142,8 +148,16 @@ public struct Usage: Sendable, Hashable {
     public var totalTokens: Int?
 
     /// Creates usage metadata.
-    public init(inputTokens: Int? = nil, outputTokens: Int? = nil, totalTokens: Int? = nil) {
+    public init(
+        inputTokens: Int? = nil,
+        cacheReadInputTokens: Int? = nil,
+        cacheCreationInputTokens: Int? = nil,
+        outputTokens: Int? = nil,
+        totalTokens: Int? = nil
+    ) {
         self.inputTokens = inputTokens
+        self.cacheReadInputTokens = cacheReadInputTokens
+        self.cacheCreationInputTokens = cacheCreationInputTokens
         self.outputTokens = outputTokens
         self.totalTokens = totalTokens
     }

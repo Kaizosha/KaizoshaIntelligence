@@ -28,6 +28,7 @@ This roadmap tracks the next quality and completeness improvements for the three
 - Anthropic now exposes provider-specific Files and token-counting services from `KaizoshaAnthropic`.
 - Shared `MessagePart.file` input now maps to Anthropic Messages document blocks for inline PDF/plain-text documents and Anthropic `file_id` references.
 - Anthropic capability resolution now exposes shared file input on Claude 3.5+/4 era families instead of leaving the feature disabled across the board.
+- Anthropic prompt caching is now available through typed provider options, including automatic caching, explicit breakpoints, and surfaced cache usage counters.
 
 ## Notes
 

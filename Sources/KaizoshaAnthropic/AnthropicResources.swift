@@ -30,11 +30,13 @@ package enum AnthropicRequestHeaders {
 
 package enum AnthropicMessagePayloadBuilder {
     package static func messagePayload(modelID: String, request: TextGenerationRequest, stream: Bool) throws -> JSONValue {
+        let splitOptions = AnthropicPromptCachingParser.split(from: request.providerOptions.options(for: AnthropicProvider.namespace))
         var object = try basePayload(
             modelID: modelID,
             messages: request.messages,
             tools: request.tools,
-            structuredOutput: request.structuredOutput
+            structuredOutput: request.structuredOutput,
+            caching: splitOptions.caching
         )
 
         object["max_tokens"] = .number(Double(request.generation.maxOutputTokens ?? 1024))
@@ -48,19 +50,28 @@ package enum AnthropicMessagePayloadBuilder {
         if stream {
             object["stream"] = .bool(true)
         }
+        if let automatic = splitOptions.caching.automatic {
+            object["cache_control"] = automatic
+        }
 
-        return JSONValue.object(object).mergingObject(with: request.providerOptions.options(for: AnthropicProvider.namespace))
+        return JSONValue.object(object).mergingObject(with: splitOptions.passthrough)
     }
 
     package static func countTokensPayload(modelID: String, request: TextGenerationRequest) throws -> JSONValue {
-        .object(
-            try basePayload(
-                modelID: modelID,
-                messages: request.messages,
-                tools: request.tools,
-                structuredOutput: request.structuredOutput
-            )
+        let splitOptions = AnthropicPromptCachingParser.split(from: request.providerOptions.options(for: AnthropicProvider.namespace))
+        var object = try basePayload(
+            modelID: modelID,
+            messages: request.messages,
+            tools: request.tools,
+            structuredOutput: request.structuredOutput,
+            caching: splitOptions.caching
         )
+
+        if let automatic = splitOptions.caching.automatic {
+            object["cache_control"] = automatic
+        }
+
+        return JSONValue.object(object).mergingObject(with: splitOptions.passthrough)
     }
 
     package static func usesFilesBeta(messages: [Message]) -> Bool {
@@ -76,28 +87,45 @@ package enum AnthropicMessagePayloadBuilder {
         modelID: String,
         messages: [Message],
         tools: ToolRegistry,
-        structuredOutput: StructuredOutputDirective?
+        structuredOutput: StructuredOutputDirective?,
+        caching: AnthropicPromptCachingConfiguration
     ) throws -> [String: JSONValue] {
         let normalized = MessagePipeline.normalize(messages)
-        let conversation = normalized.filter { $0.role != .system }
+        let conversation = normalized.enumerated().filter { $0.element.role != .system }
 
         var object: [String: JSONValue] = [
             "model": .string(modelID),
-            "messages": .array(try conversation.flatMap { try mapMessage($0, modelID: modelID) }),
+            "messages": .array(try conversation.flatMap { index, message in
+                try mapMessage(message, originalMessageIndex: index, modelID: modelID, caching: caching)
+            }),
         ]
 
         if let systemPrompt = try systemPrompt(from: normalized, structuredOutput: structuredOutput) {
-            object["system"] = .string(systemPrompt)
+            if let systemCacheControl = caching.system {
+                object["system"] = .array([
+                    .object([
+                        "type": .string("text"),
+                        "text": .string(systemPrompt),
+                        "cache_control": systemCacheControl,
+                    ]),
+                ])
+            } else {
+                object["system"] = .string(systemPrompt)
+            }
         }
 
         if tools.isEmpty == false {
             object["tools"] = .array(
-                tools.tools.map { tool in
-                    .object([
+                tools.tools.enumerated().map { index, tool in
+                    var payload: [String: JSONValue] = [
                         "name": .string(tool.name),
                         "description": .string(tool.description),
                         "input_schema": tool.inputSchema,
-                    ])
+                    ]
+                    if let cacheControl = caching.tools[index] {
+                        payload["cache_control"] = cacheControl
+                    }
+                    return .object(payload)
                 }
             )
         }
@@ -126,7 +154,12 @@ package enum AnthropicMessagePayloadBuilder {
         .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func mapMessage(_ message: ModelMessage, modelID: String) throws -> [JSONValue] {
+    private static func mapMessage(
+        _ message: ModelMessage,
+        originalMessageIndex: Int,
+        modelID: String,
+        caching: AnthropicPromptCachingConfiguration
+    ) throws -> [JSONValue] {
         switch message.role {
         case .system:
             return []
@@ -134,25 +167,38 @@ package enum AnthropicMessagePayloadBuilder {
             return [
                 .object([
                     "role": .string("user"),
-                    "content": .array(try mapUserParts(message.parts, modelID: modelID)),
+                    "content": .array(try mapUserParts(
+                        message.parts,
+                        originalMessageIndex: originalMessageIndex,
+                        modelID: modelID,
+                        caching: caching
+                    )),
                 ]),
             ]
         case .assistant:
             return [
                 .object([
                     "role": .string("assistant"),
-                    "content": .array(try mapAssistantParts(message.parts)),
+                    "content": .array(try mapAssistantParts(
+                        message.parts,
+                        originalMessageIndex: originalMessageIndex,
+                        caching: caching
+                    )),
                 ]),
             ]
         case .tool:
-            let parts = try message.parts.compactMap { part -> JSONValue? in
+            let parts = try message.parts.enumerated().compactMap { partIndex, part -> JSONValue? in
                 guard case .toolResult(let result) = part else { return nil }
-                return .object([
+                var payload: [String: JSONValue] = [
                     "type": .string("tool_result"),
                     "tool_use_id": .string(result.invocationID),
                     "content": .string(try result.output.compactString()),
                     "is_error": .bool(result.isError),
-                ])
+                ]
+                if let cacheControl = caching.messageParts[AnthropicMessagePartKey(messageIndex: originalMessageIndex, partIndex: partIndex)] {
+                    payload["cache_control"] = cacheControl
+                }
+                return .object(payload)
             }
 
             return [
@@ -164,71 +210,104 @@ package enum AnthropicMessagePayloadBuilder {
         }
     }
 
-    private static func mapUserParts(_ parts: [ModelPart], modelID: String) throws -> [JSONValue] {
-        try parts.map { part in
+    private static func mapUserParts(
+        _ parts: [ModelPart],
+        originalMessageIndex: Int,
+        modelID: String,
+        caching: AnthropicPromptCachingConfiguration
+    ) throws -> [JSONValue] {
+        try parts.enumerated().map { partIndex, part in
+            let cacheControl = caching.messageParts[AnthropicMessagePartKey(messageIndex: originalMessageIndex, partIndex: partIndex)]
+
             switch part {
             case .text(let text):
-                return .object([
+                var payload: [String: JSONValue] = [
                     "type": .string("text"),
                     "text": .string(text),
-                ])
+                ]
+                if let cacheControl {
+                    payload["cache_control"] = cacheControl
+                }
+                return .object(payload)
             case .image(let image):
                 guard let data = image.data ?? (try? Data(contentsOf: image.url!)) else {
                     throw KaizoshaError.invalidRequest("Anthropic image parts require inline data or a reachable local URL.")
                 }
 
-                return .object([
+                var payload: [String: JSONValue] = [
                     "type": .string("image"),
                     "source": .object([
                         "type": .string("base64"),
                         "media_type": .string(image.mimeType),
                         "data": .string(data.base64EncodedString()),
                     ]),
-                ])
+                ]
+                if let cacheControl {
+                    payload["cache_control"] = cacheControl
+                }
+                return .object(payload)
             case .audio:
                 throw KaizoshaError.unsupportedCapability(modelID: modelID, capability: "audio prompt parts")
             case .file(let file):
-                return try mapFile(file)
+                return try mapFile(file, cacheControl: cacheControl)
             case .toolCall, .toolResult:
                 throw KaizoshaError.invalidRequest("Tool parts are not valid inside Anthropic user messages.")
             }
         }
     }
 
-    private static func mapAssistantParts(_ parts: [ModelPart]) throws -> [JSONValue] {
-        try parts.map { part in
+    private static func mapAssistantParts(
+        _ parts: [ModelPart],
+        originalMessageIndex: Int,
+        caching: AnthropicPromptCachingConfiguration
+    ) throws -> [JSONValue] {
+        try parts.enumerated().map { partIndex, part in
+            let cacheControl = caching.messageParts[AnthropicMessagePartKey(messageIndex: originalMessageIndex, partIndex: partIndex)]
+
             switch part {
             case .text(let text):
-                return .object([
+                var payload: [String: JSONValue] = [
                     "type": .string("text"),
                     "text": .string(text),
-                ])
+                ]
+                if let cacheControl {
+                    payload["cache_control"] = cacheControl
+                }
+                return .object(payload)
             case .toolCall(let invocation):
-                return .object([
+                var payload: [String: JSONValue] = [
                     "type": .string("tool_use"),
                     "id": .string(invocation.id),
                     "name": .string(invocation.name),
                     "input": invocation.input,
-                ])
+                ]
+                if let cacheControl {
+                    payload["cache_control"] = cacheControl
+                }
+                return .object(payload)
             case .image, .audio, .file, .toolResult:
                 throw KaizoshaError.invalidRequest("Anthropic assistant messages only support text and tool call parts.")
             }
         }
     }
 
-    private static func mapFile(_ file: FileContent) throws -> JSONValue {
+    private static func mapFile(_ file: FileContent, cacheControl: JSONValue?) throws -> JSONValue {
         if let providerFileID = file.providerFileID {
             guard file.providerNamespace == AnthropicProvider.namespace else {
                 throw KaizoshaError.invalidRequest("Anthropic file prompt parts only support Anthropic file identifiers.")
             }
 
-            return .object([
+            var payload: [String: JSONValue] = [
                 "type": .string("document"),
                 "source": .object([
                     "type": .string("file"),
                     "file_id": .string(providerFileID),
                 ]),
-            ])
+            ]
+            if let cacheControl {
+                payload["cache_control"] = cacheControl
+            }
+            return .object(payload)
         }
 
         guard let data = file.data else {
@@ -239,27 +318,35 @@ package enum AnthropicMessagePayloadBuilder {
 
         switch file.mimeType.lowercased() {
         case "application/pdf":
-            return .object([
+            var payload: [String: JSONValue] = [
                 "type": .string("document"),
                 "source": .object([
                     "type": .string("base64"),
                     "media_type": .string("application/pdf"),
                     "data": .string(data.base64EncodedString()),
                 ]),
-            ])
+            ]
+            if let cacheControl {
+                payload["cache_control"] = cacheControl
+            }
+            return .object(payload)
         case "text/plain":
             guard let text = String(data: data, encoding: .utf8) else {
                 throw KaizoshaError.invalidRequest("Anthropic plain-text file parts must contain UTF-8 data.")
             }
 
-            return .object([
+            var payload: [String: JSONValue] = [
                 "type": .string("document"),
                 "source": .object([
                     "type": .string("text"),
                     "media_type": .string("text/plain"),
                     "data": .string(text),
                 ]),
-            ])
+            ]
+            if let cacheControl {
+                payload["cache_control"] = cacheControl
+            }
+            return .object(payload)
         default:
             throw KaizoshaError.invalidRequest(
                 "Anthropic inline file prompt parts currently support application/pdf and text/plain. Upload reusable files first to pass provider-managed Anthropic file identifiers."
