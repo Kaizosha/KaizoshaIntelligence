@@ -9,7 +9,7 @@ package enum AnthropicRequestHeaders {
     package static func make(
         apiKey: String,
         contentType: String? = "application/json",
-        includeFilesBeta: Bool = false
+        betas: [String] = []
     ) -> [String: String] {
         var headers: [String: String] = [
             "x-api-key": apiKey,
@@ -20,8 +20,9 @@ package enum AnthropicRequestHeaders {
             headers["Content-Type"] = contentType
         }
 
-        if includeFilesBeta {
-            headers["anthropic-beta"] = anthropicFilesBeta
+        let uniqueBetas = Array(Set(betas)).sorted()
+        if uniqueBetas.isEmpty == false {
+            headers["anthropic-beta"] = uniqueBetas.joined(separator: ",")
         }
 
         return headers
@@ -52,6 +53,9 @@ package enum AnthropicMessagePayloadBuilder {
         }
         if stream {
             object["stream"] = .bool(true)
+        }
+        if let containerID = splitOptions.containerID {
+            object["container"] = .string(containerID)
         }
         if let automatic = splitOptions.caching.automatic {
             object["cache_control"] = automatic
@@ -87,6 +91,31 @@ package enum AnthropicMessagePayloadBuilder {
                 return file.providerNamespace == AnthropicProvider.namespace && file.providerFileID != nil
             }
         }
+    }
+
+    package static func usesContainerUploads(messages: [Message]) -> Bool {
+        messages.contains { message in
+            message.parts.contains { part in
+                guard case .file(let file) = part else { return false }
+                return file.providerNamespace == AnthropicProvider.namespace
+                    && file.providerFileID != nil
+                    && file.providerFileURI == anthropicContainerUploadReferenceURI
+            }
+        }
+    }
+
+    package static func requiredBetas(for request: TextGenerationRequest) -> [String] {
+        let splitOptions = AnthropicRequestOptionsParser.split(
+            from: request.providerOptions.options(for: AnthropicProvider.namespace)
+        )
+        var betas: [String] = []
+        if usesFilesBeta(messages: request.messages) {
+            betas.append(anthropicFilesBeta)
+        }
+        if splitOptions.serverTools.contains(where: \.requiresCodeExecutionWebToolsBeta) {
+            betas.append(anthropicCodeExecutionWebToolsBeta)
+        }
+        return betas
     }
 
     private static func basePayload(
@@ -304,6 +333,17 @@ package enum AnthropicMessagePayloadBuilder {
                 throw KaizoshaError.invalidRequest("Anthropic file prompt parts only support Anthropic file identifiers.")
             }
 
+            if file.providerFileURI == anthropicContainerUploadReferenceURI {
+                var payload: [String: JSONValue] = [
+                    "type": .string("container_upload"),
+                    "file_id": .string(providerFileID),
+                ]
+                if let cacheControl {
+                    payload["cache_control"] = cacheControl
+                }
+                return .object(payload)
+            }
+
             var payload: [String: JSONValue] = [
                 "type": .string("document"),
                 "source": .object([
@@ -496,7 +536,7 @@ public struct AnthropicFilesService: Sendable {
                 headers: AnthropicRequestHeaders.make(
                     apiKey: apiKey,
                     contentType: multipart.contentType,
-                    includeFilesBeta: true
+                    betas: [anthropicFilesBeta]
                 ),
                 body: multipart.data()
             )
@@ -515,7 +555,7 @@ public struct AnthropicFilesService: Sendable {
             HTTPRequest(
                 url: baseURL.appendingPathComponents("files/\(id)"),
                 method: .get,
-                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, includeFilesBeta: true)
+                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, betas: [anthropicFilesBeta])
             )
         )
 
@@ -555,7 +595,7 @@ public struct AnthropicFilesService: Sendable {
             HTTPRequest(
                 url: components.url!,
                 method: .get,
-                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, includeFilesBeta: true)
+                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, betas: [anthropicFilesBeta])
             )
         )
 
@@ -578,7 +618,7 @@ public struct AnthropicFilesService: Sendable {
             HTTPRequest(
                 url: baseURL.appendingPathComponents("files/\(id)"),
                 method: .delete,
-                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, includeFilesBeta: true)
+                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, betas: [anthropicFilesBeta])
             )
         )
 
@@ -600,7 +640,7 @@ public struct AnthropicFilesService: Sendable {
             HTTPRequest(
                 url: baseURL.appendingPathComponents("files/\(id)/content"),
                 method: .get,
-                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, includeFilesBeta: true)
+                headers: AnthropicRequestHeaders.make(apiKey: apiKey, contentType: nil, betas: [anthropicFilesBeta])
             )
         )
 
@@ -638,21 +678,24 @@ public struct AnthropicTokensService: Sendable {
         let splitOptions = AnthropicRequestOptionsParser.split(
             from: request.providerOptions.options(for: AnthropicProvider.namespace)
         )
+        let profile = AnthropicCapabilityResolver.profile(for: modelID)
         try AnthropicServerToolValidator.validate(
             splitOptions.serverTools,
             alongside: request.tools,
+            hasContainerUploadFiles: AnthropicMessagePayloadBuilder.usesContainerUploads(messages: request.messages),
+            containerID: splitOptions.containerID,
             modelID: modelID,
-            capabilities: AnthropicCapabilityResolver.profile(for: modelID).capabilities
+            profile: profile
         )
         let payload = try AnthropicMessagePayloadBuilder.countTokensPayload(modelID: modelID, request: request)
-        let includeFilesBeta = AnthropicMessagePayloadBuilder.usesFilesBeta(messages: request.messages)
+        let betas = AnthropicMessagePayloadBuilder.requiredBetas(for: request)
 
         let responsePayload = try await client.sendJSON(
             HTTPRequest(
                 url: baseURL.appendingPathComponents("messages/count_tokens"),
                 headers: AnthropicRequestHeaders.make(
                     apiKey: apiKey,
-                    includeFilesBeta: includeFilesBeta
+                    betas: betas
                 ),
                 body: try payload.data()
             )

@@ -3,6 +3,7 @@ import KaizoshaProvider
 
 package struct AnthropicCapabilityProfile: Sendable, Hashable {
     package var capabilities: ModelCapabilities
+    package var supportsCodeExecution: Bool
 }
 
 package enum AnthropicCapabilityResolver {
@@ -11,6 +12,7 @@ package enum AnthropicCapabilityResolver {
         let isClaudeModel = normalized.contains("claude")
         let supportsVision = isClaude3Family(normalized) || isClaude4Family(normalized)
         let supportsDocuments = isClaude35Family(normalized) || isClaude37Family(normalized) || isClaude4Family(normalized)
+        let supportsCodeExecution = isClaude37Family(normalized) || isClaude35HaikuFamily(normalized) || isClaude4Family(normalized)
 
         return AnthropicCapabilityProfile(
             capabilities: ModelCapabilities(
@@ -21,12 +23,17 @@ package enum AnthropicCapabilityResolver {
                 supportsAudioInput: false,
                 supportsFileInput: supportsDocuments,
                 supportsReasoningControls: false
-            )
+            ),
+            supportsCodeExecution: supportsCodeExecution
         )
     }
 
     private static func isClaude35Family(_ normalized: String) -> Bool {
         normalized.contains("claude-3-5")
+    }
+
+    private static func isClaude35HaikuFamily(_ normalized: String) -> Bool {
+        normalized.contains("claude-3-5-haiku")
     }
 
     private static func isClaude37Family(_ normalized: String) -> Bool {

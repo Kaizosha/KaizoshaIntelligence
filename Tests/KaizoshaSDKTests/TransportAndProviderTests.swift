@@ -1493,6 +1493,140 @@ struct TransportAndProviderTests {
         #expect(finishReason == .stop)
     }
 
+    @Test("Anthropic code execution maps container reuse and container uploads")
+    func anthropicCodeExecutionMapsContainerReuseAndUploads() async throws {
+        let transport = MockHTTPTransport()
+        transport.enqueue(
+            response: HTTPResponse(
+                statusCode: 200,
+                body: Data(
+                    """
+                    {
+                      "model": "claude-opus-4-6",
+                      "container": { "id": "ctr_new" },
+                      "content": [
+                        {
+                          "type": "bash_code_execution_tool_result",
+                          "tool_use_id": "srv_1",
+                          "content": {
+                            "type": "bash_code_execution_result",
+                            "stdout": "saved output.png",
+                            "stderr": "",
+                            "return_code": 0,
+                            "content": [
+                              { "type": "file", "file_id": "file_generated" }
+                            ]
+                          }
+                        },
+                        { "type": "text", "text": "Saved the chart." }
+                      ],
+                      "stop_reason": "end_turn",
+                      "usage": {
+                        "input_tokens": 9,
+                        "output_tokens": 4
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        )
+
+        let uploaded = AnthropicFile(
+            id: "file_abc",
+            fileName: "data.csv",
+            mimeType: "text/csv",
+            rawPayload: .object(["id": .string("file_abc")])
+        )
+
+        var providerOptions = ProviderOptions()
+        providerOptions.setAnthropic(
+            AnthropicProviderOptions(
+                serverTools: [.codeExecution()],
+                containerID: "ctr_existing"
+            )
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        let response = try await provider.languageModel("claude-opus-4-6").generate(
+            request: TextGenerationRequest(
+                messages: [
+                    .user(parts: [
+                        .text("Analyze this CSV and save a chart."),
+                        .file(uploaded.asCodeExecutionFileContent()),
+                    ]),
+                ],
+                providerOptions: providerOptions
+            )
+        )
+
+        let request = try #require(transport.requests[safe: 0])
+        #expect(request.headers["anthropic-beta"] == anthropicFilesBeta)
+
+        let body = try decodeRequestBody(from: transport)
+        #expect(body.objectValue?["container"]?.stringValue == "ctr_existing")
+        #expect(body.objectValue?["tools"]?.arrayValue?.first?.objectValue?["type"]?.stringValue == "code_execution_20250825")
+        #expect(body.objectValue?["tools"]?.arrayValue?.first?.objectValue?["name"]?.stringValue == "code_execution")
+        #expect(
+            body.objectValue?["messages"]?.arrayValue?.first?.objectValue?["content"]?.arrayValue?[safe: 1]?.objectValue?["type"]?.stringValue == "container_upload"
+        )
+        #expect(
+            body.objectValue?["messages"]?.arrayValue?.first?.objectValue?["content"]?.arrayValue?[safe: 1]?.objectValue?["file_id"]?.stringValue == "file_abc"
+        )
+
+        let artifacts = try #require(response.anthropicExecutionArtifacts())
+        #expect(artifacts.containerID == "ctr_new")
+        #expect(artifacts.generatedFileIDs == ["file_generated"])
+        #expect(response.text == "Saved the chart.")
+    }
+
+    @Test("Anthropic code execution rejects container uploads without the code execution tool")
+    func anthropicCodeExecutionRejectsContainerUploadsWithoutTool() async throws {
+        let transport = MockHTTPTransport()
+        let uploaded = AnthropicFile(
+            id: "file_abc",
+            fileName: "data.csv",
+            mimeType: "text/csv",
+            rawPayload: .object(["id": .string("file_abc")])
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.languageModel("claude-opus-4-6").generate(
+                request: TextGenerationRequest(
+                    messages: [
+                        .user(parts: [
+                            .text("Analyze this CSV."),
+                            .file(uploaded.asCodeExecutionFileContent()),
+                        ]),
+                    ]
+                )
+            )
+        }
+
+        #expect(transport.requests.isEmpty)
+    }
+
+    @Test("Anthropic code execution rejects unsupported model families")
+    func anthropicCodeExecutionRejectsUnsupportedModelFamilies() async throws {
+        let transport = MockHTTPTransport()
+        var providerOptions = ProviderOptions()
+        providerOptions.setAnthropic(
+            AnthropicProviderOptions(serverTools: [.codeExecution()])
+        )
+
+        let provider = try AnthropicProvider(apiKey: "test", transport: transport)
+        await #expect(throws: KaizoshaError.self) {
+            _ = try await provider.languageModel("claude-3-5-sonnet-latest").generate(
+                request: TextGenerationRequest(
+                    prompt: "Calculate the average of [1, 2, 3].",
+                    providerOptions: providerOptions
+                )
+            )
+        }
+
+        #expect(transport.requests.isEmpty)
+    }
+
     @Test("Google adapter parses text and function calls")
     func googleAdapterParsesResponse() async throws {
         let transport = MockHTTPTransport()

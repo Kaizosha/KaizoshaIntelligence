@@ -30,6 +30,7 @@ This roadmap tracks the next quality and completeness improvements for the three
 - Anthropic capability resolution now exposes shared file input on Claude 3.5+/4 era families instead of leaving the feature disabled across the board.
 - Anthropic prompt caching is now available through typed provider options, including automatic caching, explicit breakpoints, and surfaced cache usage counters.
 - Anthropic stable web search is now available through typed server tools in `AnthropicProviderOptions.serverTools`, with early validation for name conflicts and unsupported dynamic-filtering variants.
+- Anthropic stable code execution is now available through typed server tools, including `container_upload` file mapping, typed container reuse, and response helpers for container IDs plus generated file IDs.
 
 ## Notes
 

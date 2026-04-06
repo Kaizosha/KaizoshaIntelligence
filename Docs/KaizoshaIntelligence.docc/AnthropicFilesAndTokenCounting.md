@@ -1,6 +1,6 @@
 # Anthropic Files and Token Counting
 
-Kaizosha Intelligence keeps the shared Anthropic text path on the Messages API and adds Anthropic-only helpers for file uploads, prompt caching, web search, and token counting in `KaizoshaAnthropic`.
+Kaizosha Intelligence keeps the shared Anthropic text path on the Messages API and adds Anthropic-only helpers for file uploads, prompt caching, web search, code execution, and token counting in `KaizoshaAnthropic`.
 
 ## Files API
 
@@ -131,11 +131,51 @@ let response = try await provider.languageModel("claude-sonnet-4-5").generate(
 
 Server tools are merged into Anthropic's top-level `tools` array alongside your custom tools, and Kaizosha validates name conflicts before the request is sent.
 
+## Code Execution
+
+Anthropic's stable code-execution tool is also available through `AnthropicProviderOptions.serverTools`.
+
+```swift
+let provider = try AnthropicProvider()
+let uploaded = try await provider.files.upload(
+    AnthropicFileUploadRequest(
+        data: csvData,
+        fileName: "data.csv",
+        mimeType: "text/csv"
+    )
+)
+
+var providerOptions = ProviderOptions()
+providerOptions.setAnthropic(
+    AnthropicProviderOptions(
+        serverTools: [.codeExecution()]
+    )
+)
+
+let response = try await provider.languageModel("claude-opus-4-6").generate(
+    request: TextGenerationRequest(
+        messages: [
+            .user(parts: [
+                .text("Analyze this CSV and save a chart."),
+                .file(uploaded.asCodeExecutionFileContent()),
+            ]),
+        ],
+        providerOptions: providerOptions
+    )
+)
+
+let artifacts = response.anthropicExecutionArtifacts()
+```
+
+Use `AnthropicFile.asCodeExecutionFileContent()` when an uploaded file should be mounted into Anthropic's execution container as a `container_upload` block instead of a document block. `anthropicExecutionArtifacts()` exposes the returned container ID plus any generated file IDs so you can reuse the container or download created files through `AnthropicProvider.files`.
+
 ## Notes
 
 - The Files API currently uses Anthropic's documented beta header.
 - Anthropic prompt caching supports both top-level automatic caching and explicit block-level breakpoints through typed Anthropic provider options.
 - Anthropic web search is available through the stable server-side `web_search_20250305` tool definition.
-- Anthropic's newer dynamic web-search variant depends on code execution and is intentionally deferred until the SDK exposes Anthropic code execution.
+- Anthropic code execution is available through the stable `code_execution_20250825` tool definition on supported Claude model families.
+- Anthropic's newer dynamic web-search variant still needs a dedicated typed SDK surface even though code execution is now exposed.
 - Shared Anthropic file input is intentionally conservative today. Inline file bytes are limited to PDF and plain text; reusable uploaded files should be passed back through Anthropic file IDs.
+- `pause_turn` continuation for long-running Anthropic code-execution turns is not yet modeled as a provider-neutral continuation API.
 - Anthropic embeddings, audio input, speech, transcription, and Realtime are still outside the current Anthropic adapter surface.

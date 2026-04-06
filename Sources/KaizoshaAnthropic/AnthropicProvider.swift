@@ -16,17 +16,22 @@ public struct AnthropicProviderOptions: Sendable, Hashable {
     /// Anthropic server-side tools, such as web search.
     public var serverTools: [AnthropicServerTool]
 
+    /// An optional code-execution container identifier to reuse between requests.
+    public var containerID: String?
+
     /// Creates Anthropic-specific options.
     public init(
         userID: String? = nil,
         topK: Int? = nil,
         promptCaching: AnthropicPromptCachingOptions? = nil,
-        serverTools: [AnthropicServerTool] = []
+        serverTools: [AnthropicServerTool] = [],
+        containerID: String? = nil
     ) {
         self.userID = userID
         self.topK = topK
         self.promptCaching = promptCaching
         self.serverTools = serverTools
+        self.containerID = containerID
     }
 
     /// Encodes the options into a JSON payload.
@@ -45,6 +50,9 @@ public struct AnthropicProviderOptions: Sendable, Hashable {
         }
         if serverTools.isEmpty == false {
             object[anthropicServerToolsSentinelKey] = .array(serverTools.map(\.jsonValue))
+        }
+        if let containerID {
+            object[anthropicContainerIDSentinelKey] = .string(containerID)
         }
 
         return .object(object)
@@ -175,7 +183,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
         let response = try await client.send(
             HTTPRequest(
                 url: baseURL.appendingPathComponents("messages"),
-                headers: headers(includeFilesBeta: AnthropicMessagePayloadBuilder.usesFilesBeta(messages: request.messages)),
+                headers: headers(for: request),
                 body: try body.data()
             )
         )
@@ -218,7 +226,7 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
                     let body = try AnthropicMessagePayloadBuilder.messagePayload(modelID: id, request: request, stream: true)
                     let httpRequest = HTTPRequest(
                         url: baseURL.appendingPathComponents("messages"),
-                        headers: headers(includeFilesBeta: AnthropicMessagePayloadBuilder.usesFilesBeta(messages: request.messages)),
+                        headers: headers(for: request),
                         body: try body.data()
                     )
                     let events = await client.streamEvents(httpRequest)
@@ -357,19 +365,25 @@ public struct AnthropicLanguageModel: LanguageModel, Sendable {
         }
     }
 
-    private func headers(includeFilesBeta: Bool = false) -> [String: String] {
-        AnthropicRequestHeaders.make(apiKey: apiKey, includeFilesBeta: includeFilesBeta)
+    private func headers(for request: TextGenerationRequest) -> [String: String] {
+        AnthropicRequestHeaders.make(
+            apiKey: apiKey,
+            betas: AnthropicMessagePayloadBuilder.requiredBetas(for: request)
+        )
     }
 
     private func validateServerTools(for request: TextGenerationRequest) throws {
         let splitOptions = AnthropicRequestOptionsParser.split(
             from: request.providerOptions.options(for: AnthropicProvider.namespace)
         )
+        let profile = AnthropicCapabilityResolver.profile(for: id)
         try AnthropicServerToolValidator.validate(
             splitOptions.serverTools,
             alongside: request.tools,
+            hasContainerUploadFiles: AnthropicMessagePayloadBuilder.usesContainerUploads(messages: request.messages),
+            containerID: splitOptions.containerID,
             modelID: id,
-            capabilities: capabilities
+            profile: profile
         )
     }
 }

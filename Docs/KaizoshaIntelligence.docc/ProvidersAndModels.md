@@ -89,5 +89,6 @@ For OpenAI, ``OpenAIProviderOptions`` maps Responses-specific settings such as `
 For Anthropic, the shared request path stays on the Messages API, while Anthropic-only helpers expose the Files API and `messages/count_tokens`. Shared Anthropic file input maps inline PDF/plain-text documents and Anthropic `file_id` references into Messages document blocks, and prompt caching is available through `AnthropicProviderOptions.promptCaching`.
 
 Anthropic server tools are also available through `AnthropicProviderOptions.serverTools`, including the stable `AnthropicServerTool.webSearch(...)` helper for provider-managed web search.
+Anthropic code execution is available through `AnthropicServerTool.codeExecution()`, uploaded files can be remapped into `container_upload` blocks with `AnthropicFile.asCodeExecutionFileContent()`, and `TextGenerationResponse.anthropicExecutionArtifacts()` exposes the returned container ID and generated file IDs.
 
 For Google, ``GoogleProviderOptions`` maps `generationConfig`, `safetySettings`, `toolConfig`, cached-content references, storage/service-tier settings, and Google built-in tools while keeping the provider-neutral `GenerationConfig` surface stable.

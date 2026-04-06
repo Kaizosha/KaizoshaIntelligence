@@ -7,7 +7,7 @@ Kaizosha Intelligence is a Swift-first AI SDK with a provider-agnostic core and 
 - Unified text generation and streaming APIs
 - OpenAI Responses-first language adapter with explicit legacy Chat Completions fallback
 - OpenAI-only raw Responses, files, GPT-image edits, DALL-E 2 variations, speech streaming on compatible TTS models, translation, and Realtime APIs
-- Anthropic Messages plus Anthropic-only files, prompt caching, web search, and token-counting APIs
+- Anthropic Messages plus Anthropic-only files, prompt caching, web search, code execution, and token-counting APIs
 - Google Gemini `generateContent` plus Google-only models, token counting, files, cached contents, file-search stores, batch jobs, Interactions, and Live APIs
 - Typed structured output with `Schema<Value>`
 - Deterministic tool calling
@@ -212,7 +212,47 @@ let response = try await provider.languageModel("claude-sonnet-4-5").generate(
 print(response.text)
 ```
 
-Stable Anthropic web search is exposed as a typed Anthropic server tool. Dynamic filtering variants that require Anthropic code execution are intentionally deferred until the code-execution tool is implemented.
+Stable Anthropic web search is exposed as a typed Anthropic server tool. Dynamic filtering variants remain deferred until the SDK adds a dedicated typed Anthropic dynamic web-search surface on top of code execution.
+
+## Anthropic Code Execution
+
+```swift
+import KaizoshaAnthropic
+
+let provider = try AnthropicProvider()
+let uploaded = try await provider.files.upload(
+    AnthropicFileUploadRequest(
+        data: csvData,
+        fileName: "data.csv",
+        mimeType: "text/csv"
+    )
+)
+
+var providerOptions = ProviderOptions()
+providerOptions.setAnthropic(
+    AnthropicProviderOptions(
+        serverTools: [.codeExecution()]
+    )
+)
+
+let response = try await provider.languageModel("claude-opus-4-6").generate(
+    request: TextGenerationRequest(
+        messages: [
+            .user(parts: [
+                .text("Analyze this CSV and save a chart."),
+                .file(uploaded.asCodeExecutionFileContent()),
+            ]),
+        ],
+        providerOptions: providerOptions
+    )
+)
+
+let artifacts = response.anthropicExecutionArtifacts()
+print(artifacts?.containerID ?? "")
+print(artifacts?.generatedFileIDs ?? [])
+```
+
+Anthropic code execution is exposed as a typed Anthropic server tool. Uploaded Anthropic files can be remapped into `container_upload` prompt parts with `AnthropicFile.asCodeExecutionFileContent()`, and `TextGenerationResponse.anthropicExecutionArtifacts()` exposes the returned container ID plus any generated file IDs.
 
 ## Example Executables
 

@@ -2,21 +2,33 @@ import Foundation
 import KaizoshaProvider
 
 package let anthropicServerToolsSentinelKey = "__kaizosha_server_tools"
+package let anthropicContainerIDSentinelKey = "__kaizosha_container_id"
+package let anthropicContainerUploadReferenceURI = "anthropic://container-upload"
+package let anthropicCodeExecutionWebToolsBeta = "code-execution-web-tools-2026-02-09"
 
 package struct AnthropicRequestOptionsSplit: Sendable, Hashable {
     package var passthrough: JSONValue?
     package var caching: AnthropicPromptCachingConfiguration
     package var serverTools: [AnthropicServerTool]
+    package var containerID: String?
 
     package init(
         passthrough: JSONValue? = nil,
         caching: AnthropicPromptCachingConfiguration = AnthropicPromptCachingConfiguration(),
-        serverTools: [AnthropicServerTool] = []
+        serverTools: [AnthropicServerTool] = [],
+        containerID: String? = nil
     ) {
         self.passthrough = passthrough
         self.caching = caching
         self.serverTools = serverTools
+        self.containerID = containerID
     }
+}
+
+/// Anthropic's documented code-execution tool versions.
+public enum AnthropicCodeExecutionToolVersion: String, Sendable, Hashable {
+    /// The current stable Bash-and-files tool version.
+    case bashAndFiles = "code_execution_20250825"
 }
 
 /// An approximate end-user location used to localize Anthropic web-search results.
@@ -99,6 +111,21 @@ public struct AnthropicServerTool: Sendable, Hashable {
         )
     }
 
+    /// Creates Anthropic's stable code-execution tool definition.
+    public static func codeExecution(
+        version: AnthropicCodeExecutionToolVersion = .bashAndFiles
+    ) -> AnthropicServerTool {
+        AnthropicServerTool(type: version.rawValue, name: "code_execution")
+    }
+
+    package var isCodeExecution: Bool {
+        type.hasPrefix("code_execution_")
+    }
+
+    package var requiresCodeExecutionWebToolsBeta: Bool {
+        type == "web_search_20260209" || type == "web_fetch_20260209"
+    }
+
     package var jsonValue: JSONValue {
         JSONValue
             .object([
@@ -140,10 +167,14 @@ package enum AnthropicRequestOptionsParser {
     package static func split(from providerOptions: JSONValue?) -> AnthropicRequestOptionsSplit {
         let cachingSplit = AnthropicPromptCachingParser.split(from: providerOptions)
         let serverToolsSplit = AnthropicServerToolsParser.split(from: cachingSplit.passthrough)
+        let containerID = serverToolsSplit.passthrough?.objectValue?[anthropicContainerIDSentinelKey]?.stringValue
+        var passthrough = serverToolsSplit.passthrough?.objectValue ?? [:]
+        passthrough.removeValue(forKey: anthropicContainerIDSentinelKey)
         return AnthropicRequestOptionsSplit(
-            passthrough: serverToolsSplit.passthrough,
+            passthrough: passthrough.isEmpty ? nil : .object(passthrough),
             caching: cachingSplit.caching,
-            serverTools: serverToolsSplit.serverTools
+            serverTools: serverToolsSplit.serverTools,
+            containerID: containerID
         )
     }
 }
@@ -152,12 +183,25 @@ package enum AnthropicServerToolValidator {
     package static func validate(
         _ serverTools: [AnthropicServerTool],
         alongside customTools: ToolRegistry,
+        hasContainerUploadFiles: Bool,
+        containerID: String?,
         modelID: String,
-        capabilities: ModelCapabilities
+        profile: AnthropicCapabilityProfile
     ) throws {
+        let hasCodeExecution = serverTools.contains(where: \.isCodeExecution)
+        if hasContainerUploadFiles && hasCodeExecution == false {
+            throw KaizoshaError.invalidRequest(
+                "Anthropic container-upload file references require the Anthropic code execution tool."
+            )
+        }
+        if containerID != nil && hasCodeExecution == false {
+            throw KaizoshaError.invalidRequest(
+                "Anthropic container reuse requires the Anthropic code execution tool."
+            )
+        }
         guard serverTools.isEmpty == false else { return }
 
-        guard capabilities.supportsToolCalling else {
+        guard profile.capabilities.supportsToolCalling else {
             throw KaizoshaError.unsupportedCapability(modelID: modelID, capability: "Anthropic server tools")
         }
 
@@ -169,7 +213,7 @@ package enum AnthropicServerToolValidator {
         for serverTool in serverTools {
             if serverTool.type == "web_search_20260209" {
                 throw KaizoshaError.invalidRequest(
-                    "Anthropic dynamic web search requires the code execution tool, which is not yet exposed by KaizoshaAnthropic."
+                    "Anthropic dynamic web search is still deferred until a dedicated typed Anthropic dynamic web-search surface lands in KaizoshaAnthropic."
                 )
             }
 
@@ -178,6 +222,10 @@ package enum AnthropicServerToolValidator {
                let maxUses = ModelCatalogDecoding.intValue(object["max_uses"]),
                maxUses < 1 {
                 throw KaizoshaError.invalidRequest("Anthropic web search maxUses must be at least 1.")
+            }
+
+            if serverTool.isCodeExecution && profile.supportsCodeExecution == false {
+                throw KaizoshaError.unsupportedCapability(modelID: modelID, capability: "Anthropic code execution")
             }
         }
     }
